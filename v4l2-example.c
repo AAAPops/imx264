@@ -42,15 +42,16 @@ struct buffer {
 static char            *dev_name;
 static enum io_method   io = IO_METHOD_MMAP;
 static int              fd = -1;
+static int              get_info = -1;
 struct buffer          *buffers;
 static unsigned int     n_buffers;
-static int              out_buf = -1;
+static int              out_buf = 1;
 static int              force_format = -1;
 static int              frame_count = 70;
 
 static void errno_exit(const char *s)
 {
-    fprintf(stderr, "%s error %d, %s \n", s, errno, strerror(errno));
+    fprintf(stderr, "%s: error %d, %m \n", s, errno);
     exit(EXIT_FAILURE);
 }
 
@@ -339,7 +340,6 @@ static void init_mmap(void)
     }
 
     buffers = calloc(req.count, sizeof(*buffers));
-
     if (!buffers) {
         fprintf(stderr, "Out of memory \n");
         exit(EXIT_FAILURE);
@@ -409,6 +409,57 @@ static void init_userp(unsigned int buffer_size)
         }
 }
 
+
+static void get_device_info(void)
+{
+    struct v4l2_fmtdesc fmtdesc;
+    struct v4l2_frmsizeenum framesize;
+
+    int index, index2;
+
+    CLEAR(fmtdesc);
+    CLEAR(framesize);
+
+    fprintf(stderr, "'%s' support formats: \n", dev_name);
+
+    for( index = 0; ;index++ ) {
+        fmtdesc.index = index;
+        fmtdesc.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+
+        if( ioctl(fd, VIDIOC_ENUM_FMT, &fmtdesc) < 0 )
+            if (errno == EINVAL)
+                exit(0);
+            else
+                errno_exit("VIDIOC_ENUM_FMT");
+
+        fprintf(stderr, " %s \n", fmtdesc.description);
+        for( index2 = 0; ;index2++ ) {
+            framesize.index = index2;
+            framesize.pixel_format = fmtdesc.pixelformat;
+
+            if( ioctl(fd, VIDIOC_ENUM_FRAMESIZES, &framesize) < 0 )
+                if (errno == EINVAL)
+                    break;
+                 else
+                     errno_exit("VIDIOC_ENUM_FRAMESIZES");
+
+            if( framesize.type == V4L2_FRMSIZE_TYPE_DISCRETE ) {
+                fprintf(stderr, "\t\t\t %dx%d \n", framesize.discrete.width, framesize.discrete.height);
+                continue;
+            }
+
+            if( framesize.type == V4L2_FRMSIZE_TYPE_CONTINUOUS ||
+                framesize.type == V4L2_FRMSIZE_TYPE_STEPWISE)
+            {
+                fprintf(stderr, "\t\t\t Unsupported format \n");
+                continue;
+            }
+        }
+    }
+}
+
+
+
 static void init_device(void)
 {
     struct v4l2_capability cap;
@@ -469,11 +520,14 @@ static void init_device(void)
                 /* Errors ignored. */
         }
 
+    if ( get_info == 1 ) {
+        get_device_info();
+    }
 
     CLEAR(fmt);
 
     fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    if (force_format > 0 ) {
+    if( force_format > 0 ) {
         fmt.fmt.pix.width       = 640;
         fmt.fmt.pix.height      = 480;
         fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_YUYV;
@@ -549,6 +603,7 @@ static void usage(FILE *fp, int argc, char **argv)
             "Options:\n"
             "-d | --device name   Video device name [%s] \n"
             "-h | --help          Print this message \n"
+            "-i | --info          Get device info \n"
             "-m | --mmap          Use memory mapped buffers [default] \n"
             "-r | --read          Use read() calls \n"
             "-u | --userp         Use application allocated buffers \n"
@@ -559,7 +614,7 @@ static void usage(FILE *fp, int argc, char **argv)
             argv[0], dev_name, frame_count);
 }
 
-static const char short_options[] = "d:hmruofc:";
+static const char short_options[] = "d:himruofc:";
 
 static const struct option
 long_options[] = {
@@ -598,6 +653,10 @@ int main(int argc, char **argv)
         case 'h':
                 usage(stdout, argc, argv);
                 exit(EXIT_SUCCESS);
+
+        case 'i':
+            get_info = 1;
+            break;
 
         case 'm':
             io = IO_METHOD_MMAP;
