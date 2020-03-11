@@ -11,3 +11,7 @@ find_package(Threads REQUIRED)
 
 add_executable(webcam_x264 ${SOURCE})
 target_link_libraries(webcam_x264  Threads::Threads)
+
+
+add_executable(v4l2-example  v4l2-example.c)
+target_link_libraries(v4l2-example  Threads::Threads)
