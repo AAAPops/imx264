@@ -26,6 +26,10 @@
 
 #include <linux/videodev2.h>
 
+#include <netinet/in.h>
+#include <sys/socket.h>
+
+#define SA struct sockaddr
 #define CLEAR(x) memset(&(x), 0, sizeof(x))
 
 enum io_method {
@@ -39,15 +43,24 @@ struct buffer {
     size_t  length;
 };
 
-static char            *dev_name;
+static char            *dev_name = "/dev/video0";
 static enum io_method   io = IO_METHOD_MMAP;
-static int              fd = -1;
+static int              wcam_fd = -1;
 static int              get_info = -1;
 struct buffer          *buffers;
 static unsigned int     n_buffers;
-static int              out_buf = 1;
-static int              force_format = -1;
-static int              frame_count = 70;
+
+static int              x_res = 640;
+static int              y_res = 480;
+static int              frame_rate = 10;
+static int              frame_count = 100;
+
+FILE                    *file_ptr;
+char                    *file_name;
+
+int                     srv_port;
+int                     sock_fd = -1;
+int                     conn_fd = -1;
 
 static void errno_exit(const char *s)
 {
@@ -66,10 +79,19 @@ static int xioctl(int fh, int request, void *arg)
     return r;
 }
 
-static void process_image(const void *p, int size)
-{
-    if (out_buf > 0)
-        fwrite(p, size, 1, stdout);
+static void process_image(const void *buff_ptr, int buff_size) {
+    // send the buffer to 'stdout'
+    if (file_ptr)
+        fwrite(buff_ptr, buff_size, 1, file_ptr);
+
+    // send the buffer to client
+    if ( conn_fd > 0 ) {
+        int n_bytes = write(conn_fd, buff_ptr, buff_size);
+        if ( n_bytes != buff_size ) {
+            fprintf(stderr, "n_bytes %d == buff_size %d \n", n_bytes, buff_size);
+            exit(EXIT_FAILURE);
+        }
+    }
 
     fflush(stderr);
     fprintf(stderr, ".");
@@ -83,7 +105,7 @@ static int read_frame(void)
 
     switch (io) {
         case IO_METHOD_READ:
-            if (-1 == read(fd, buffers[0].start, buffers[0].length)) {
+            if (-1 == read(wcam_fd, buffers[0].start, buffers[0].length)) {
                 switch (errno) {
                     case EAGAIN:
                         return 0;
@@ -106,7 +128,7 @@ static int read_frame(void)
             buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
             buf.memory = V4L2_MEMORY_MMAP;
 
-            if (-1 == xioctl(fd, VIDIOC_DQBUF, &buf)) {
+            if (-1 == xioctl(wcam_fd, VIDIOC_DQBUF, &buf)) {
                 switch (errno) {
                     case EAGAIN:
                         return 0;
@@ -122,10 +144,9 @@ static int read_frame(void)
 
             assert(buf.index < n_buffers);
 
-            fprintf(stderr, "buffers[%d].start \n", buf.index);
             process_image(buffers[buf.index].start, buf.bytesused);
 
-            if (-1 == xioctl(fd, VIDIOC_QBUF, &buf))
+            if (-1 == xioctl(wcam_fd, VIDIOC_QBUF, &buf))
                 errno_exit("VIDIOC_QBUF");
             break;
 
@@ -135,7 +156,7 @@ static int read_frame(void)
                 buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
                 buf.memory = V4L2_MEMORY_USERPTR;
 
-                if (-1 == xioctl(fd, VIDIOC_DQBUF, &buf)) {
+                if (-1 == xioctl(wcam_fd, VIDIOC_DQBUF, &buf)) {
                         switch (errno) {
                         case EAGAIN:
                                 return 0;
@@ -159,7 +180,7 @@ static int read_frame(void)
 
                 process_image((void *)buf.m.userptr, buf.bytesused);
 
-                if (-1 == xioctl(fd, VIDIOC_QBUF, &buf))
+                if (-1 == xioctl(wcam_fd, VIDIOC_QBUF, &buf))
                         errno_exit("VIDIOC_QBUF");
                 break;
         }
@@ -180,13 +201,13 @@ static void mainloop(void)
             int r;
 
             FD_ZERO(&fds);
-            FD_SET(fd, &fds);
+            FD_SET(wcam_fd, &fds);
 
             /* Timeout. */
             tv.tv_sec = 2;
             tv.tv_usec = 0;
 
-            r = select(fd + 1, &fds, NULL, NULL, &tv);
+            r = select(wcam_fd + 1, &fds, NULL, NULL, &tv);
 
             if (-1 == r) {
                 if (EINTR == errno)
@@ -218,7 +239,7 @@ static void stop_capturing(void)
         case IO_METHOD_MMAP:
         case IO_METHOD_USERPTR:
             type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-            if (-1 == xioctl(fd, VIDIOC_STREAMOFF, &type))
+            if (-1 == xioctl(wcam_fd, VIDIOC_STREAMOFF, &type))
                 errno_exit("VIDIOC_STREAMOFF");
             break;
     }
@@ -243,12 +264,12 @@ static void start_capturing(void)
                 buf.memory = V4L2_MEMORY_MMAP;
                 buf.index = i;
 
-                if (-1 == xioctl(fd, VIDIOC_QBUF, &buf))
+                if (-1 == xioctl(wcam_fd, VIDIOC_QBUF, &buf))
                     errno_exit("VIDIOC_QBUF");
             }
 
             type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-            if (-1 == xioctl(fd, VIDIOC_STREAMON, &type))
+            if (-1 == xioctl(wcam_fd, VIDIOC_STREAMON, &type))
                 errno_exit("VIDIOC_STREAMON");
             break;
 
@@ -263,11 +284,11 @@ static void start_capturing(void)
                 buf.m.userptr = (unsigned long)buffers[i].start;
                 buf.length = buffers[i].length;
 
-                if (-1 == xioctl(fd, VIDIOC_QBUF, &buf))
+                if (-1 == xioctl(wcam_fd, VIDIOC_QBUF, &buf))
                     errno_exit("VIDIOC_QBUF");
             }
             type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-            if (-1 == xioctl(fd, VIDIOC_STREAMON, &type))
+            if (-1 == xioctl(wcam_fd, VIDIOC_STREAMON, &type))
                 errno_exit("VIDIOC_STREAMON");
             break;
     }
@@ -325,7 +346,7 @@ static void init_mmap(void)
     req.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     req.memory = V4L2_MEMORY_MMAP;
 
-    if (-1 == xioctl(fd, VIDIOC_REQBUFS, &req)) {
+    if (-1 == xioctl(wcam_fd, VIDIOC_REQBUFS, &req)) {
         if (EINVAL == errno) {
             fprintf(stderr, "%s does not support memory mapping \n", dev_name);
             exit(EXIT_FAILURE);
@@ -354,17 +375,16 @@ static void init_mmap(void)
         buf.memory      = V4L2_MEMORY_MMAP;
         buf.index       = n_buffers;
 
-        if (-1 == xioctl(fd, VIDIOC_QUERYBUF, &buf))
+        if (-1 == xioctl(wcam_fd, VIDIOC_QUERYBUF, &buf))
             errno_exit("VIDIOC_QUERYBUF");
 
-        fprintf(stderr, "buffers[%d].length = %d \n", n_buffers, buf.length);
         buffers[n_buffers].length = buf.length;
         buffers[n_buffers].start =
                 mmap(NULL /* start anywhere */,
                         buf.length,
                         PROT_READ | PROT_WRITE /* required */,
                         MAP_SHARED /* recommended */,
-                        fd, buf.m.offset);
+                        wcam_fd, buf.m.offset);
 
         if (MAP_FAILED == buffers[n_buffers].start)
             errno_exit("mmap");
@@ -381,7 +401,7 @@ static void init_userp(unsigned int buffer_size)
         req.type   = V4L2_BUF_TYPE_VIDEO_CAPTURE;
         req.memory = V4L2_MEMORY_USERPTR;
 
-        if (-1 == xioctl(fd, VIDIOC_REQBUFS, &req)) {
+        if (-1 == xioctl(wcam_fd, VIDIOC_REQBUFS, &req)) {
                 if (EINVAL == errno) {
                         fprintf(stderr, "%s does not support "
                                  "user pointer i/on", dev_name);
@@ -426,7 +446,7 @@ static void get_device_info(void)
         fmtdesc.index = index;
         fmtdesc.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
 
-        if( ioctl(fd, VIDIOC_ENUM_FMT, &fmtdesc) < 0 )
+        if( ioctl(wcam_fd, VIDIOC_ENUM_FMT, &fmtdesc) < 0 )
             if (errno == EINVAL)
                 exit(0);
             else
@@ -437,7 +457,7 @@ static void get_device_info(void)
             framesize.index = index2;
             framesize.pixel_format = fmtdesc.pixelformat;
 
-            if( ioctl(fd, VIDIOC_ENUM_FRAMESIZES, &framesize) < 0 )
+            if( ioctl(wcam_fd, VIDIOC_ENUM_FRAMESIZES, &framesize) < 0 )
                 if (errno == EINVAL)
                     break;
                  else
@@ -466,9 +486,10 @@ static void init_device(void)
     struct v4l2_cropcap cropcap;
     struct v4l2_crop crop;
     struct v4l2_format fmt;
+    struct v4l2_streamparm streamparm;
     unsigned int min;
 
-    if( ioctl(fd, VIDIOC_QUERYCAP, &cap) <0 ) {
+    if( ioctl(wcam_fd, VIDIOC_QUERYCAP, &cap) <0 ) {
         fprintf(stderr, "'%s' is no V4L2 device: %m \n",dev_name);
         exit(EXIT_FAILURE);
     }
@@ -501,11 +522,11 @@ static void init_device(void)
 
     cropcap.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
 
-    if (0 == xioctl(fd, VIDIOC_CROPCAP, &cropcap)) {
+    if (0 == xioctl(wcam_fd, VIDIOC_CROPCAP, &cropcap)) {
         crop.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
         crop.c = cropcap.defrect; /* reset to default */
 
-        if (-1 == xioctl(fd, VIDIOC_S_CROP, &crop)) {
+        if (-1 == xioctl(wcam_fd, VIDIOC_S_CROP, &crop)) {
             switch (errno) {
                 case EINVAL:
                     /* Cropping not supported. */
@@ -527,21 +548,14 @@ static void init_device(void)
     CLEAR(fmt);
 
     fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    if( force_format > 0 ) {
-        fmt.fmt.pix.width       = 640;
-        fmt.fmt.pix.height      = 480;
-        fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_YUYV;
-        fmt.fmt.pix.field       = V4L2_FIELD_INTERLACED;
+    fmt.fmt.pix.width       = x_res;
+    fmt.fmt.pix.height      = y_res;
+    fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_YUYV;
+    fmt.fmt.pix.field       = V4L2_FIELD_INTERLACED;
 
-        if ( ioctl(fd, VIDIOC_S_FMT, &fmt) < 0 )
-            errno_exit("VIDIOC_S_FMT");
+    if ( ioctl(wcam_fd, VIDIOC_S_FMT, &fmt) < 0 )
+        errno_exit("VIDIOC_S_FMT");
 
-        /* Note VIDIOC_S_FMT may change width and height. */
-    } else {
-        /* Preserve original settings as set by v4l2-ctl for example */
-        if ( ioctl(fd, VIDIOC_G_FMT, &fmt) <0 )
-            errno_exit("VIDIOC_G_FMT");
-    }
 
     /* Buggy driver paranoia. */
     min = fmt.fmt.pix.width * 2;
@@ -550,6 +564,23 @@ static void init_device(void)
     min = fmt.fmt.pix.bytesperline * fmt.fmt.pix.height;
     if (fmt.fmt.pix.sizeimage < min)
         fmt.fmt.pix.sizeimage = min;
+
+
+    // Set framerate
+    CLEAR(streamparm);
+    streamparm.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    if( xioctl(wcam_fd, VIDIOC_G_PARM, &streamparm) != 0 ) {
+        fprintf(stderr, "'%s' can not get stream params: %m \n",dev_name);
+        exit(EXIT_FAILURE);
+    }
+
+    streamparm.parm.capture.capturemode |= V4L2_CAP_TIMEPERFRAME;
+    streamparm.parm.capture.timeperframe.numerator = 1;
+    streamparm.parm.capture.timeperframe.denominator = frame_rate;
+    if( xioctl(wcam_fd, VIDIOC_S_PARM, &streamparm) !=0 ) {
+        fprintf(stderr, "'%s' can not set frame rate: %m \n",dev_name);
+        exit(EXIT_FAILURE);
+    }
 
     switch (io) {
         case IO_METHOD_READ:
@@ -568,23 +599,23 @@ static void init_device(void)
 
 static void close_device(void)
 {
-    if (-1 == close(fd))
+    if (-1 == close(wcam_fd))
         errno_exit("close");
 
-    fd = -1;
+    wcam_fd = -1;
 }
 
 static void open_device(void)
 {
     struct stat st;
 
-    fd = open(dev_name, O_RDWR | O_NONBLOCK, 0);
-    if ( fd < 0 ) {
+    wcam_fd = open(dev_name, O_RDWR | O_NONBLOCK, 0);
+    if ( wcam_fd < 0 ) {
         fprintf(stderr, "Cannot open '%s': %m \n", dev_name);
         exit(EXIT_FAILURE);
     }
 
-    if ( fstat(fd, &st) < 0 ) {
+    if ( fstat(wcam_fd, &st) < 0 ) {
         fprintf(stderr, "Cannot identify '%s': %m \n", dev_name);
         exit(EXIT_FAILURE);
     }
@@ -595,6 +626,53 @@ static void open_device(void)
     }
 }
 
+static void start_server(void)
+{
+    struct sockaddr_in servaddr, cli;
+
+    // socket create and verification
+    sock_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock_fd == -1) {
+        fprintf(stderr, "Socket creation failed...[%m] \n");
+        exit(EXIT_FAILURE);
+    } else
+        fprintf(stderr, "Socket successfully created...\n");
+
+    int enable = 1;
+    if ( setsockopt(sock_fd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)) < 0 )
+        fprintf(stderr, "setsockopt(SO_REUSEADDR) failed \n");
+
+    bzero(&servaddr, sizeof(servaddr));
+    // assign IP, PORT
+    servaddr.sin_family = AF_INET;
+    servaddr.sin_addr.s_addr = htonl(INADDR_ANY); //INADDR_LOOPBACK for 127.0.0.1
+    servaddr.sin_port = htons(srv_port);
+
+    // Binding newly created socket to given IP and verification
+    if ((bind(sock_fd, (SA*)&servaddr, sizeof(servaddr))) != 0) {
+        fprintf(stderr, "Socket bind failed... [%m] \n");
+        exit(EXIT_FAILURE);;
+    } else
+        fprintf(stderr, "Socket successfully binded... \n");
+
+    // Now server is ready to listen and verification
+    if ((listen(sock_fd, 1)) != 0) {
+        fprintf(stderr, "Listen failed... [%m] \n");
+        exit(EXIT_FAILURE);
+    } else
+        fprintf(stderr, "Server listening on port #%d \n", srv_port);
+
+    int len = sizeof(cli);
+    // Accept the data packet from client and verification
+    conn_fd = accept(sock_fd, (SA*)&cli, &len);
+    if (conn_fd < 0) {
+        fprintf(stderr, "Server acccept failed... [%m]\n");
+        exit(EXIT_FAILURE);
+    } else
+        fprintf(stderr, "Server acccept the client...\n");
+}
+
+
 static void usage(FILE *fp, int argc, char **argv)
 {
     fprintf(fp,
@@ -604,90 +682,106 @@ static void usage(FILE *fp, int argc, char **argv)
             "-d | --device name   Video device name [%s] \n"
             "-h | --help          Print this message \n"
             "-i | --info          Get device info \n"
-            "-m | --mmap          Use memory mapped buffers [default] \n"
-            "-r | --read          Use read() calls \n"
-            "-u | --userp         Use application allocated buffers \n"
-            "-o | --output        Outputs stream to stdout \n"
-            "-f | --format        Force format to 640x480 YUYV \n"
+            "-s | --server        Start server on 127.0.0.1:[port] \n"
+            "-f | --file          Outputs stream to file \n"
+            "-x | --x-res         Webcam X resolution [default: 640] \n"
+            "-y | --y-res         Webcam Y resolution [default: 480] \n"
+            "-r | --frate         Webcam Frame rate [default: 10] \n"
             "-c | --count         Number of frames to grab [%i] \n"
             "",
             argv[0], dev_name, frame_count);
 }
 
-static const char short_options[] = "d:himruofc:";
+static const char short_options[] = "d:his:f:x:y:r:c:";
 
 static const struct option
 long_options[] = {
     { "device", required_argument, NULL, 'd' },
     { "help",   no_argument,       NULL, 'h' },
-    { "mmap",   no_argument,       NULL, 'm' },
-    { "read",   no_argument,       NULL, 'r' },
-    { "userp",  no_argument,       NULL, 'u' },
-    { "output", no_argument,       NULL, 'o' },
-    { "format", no_argument,       NULL, 'f' },
+    { "info",   no_argument,       NULL, 'i' },
+    { "server", required_argument, NULL, 's' },
+    { "file",   required_argument, NULL, 'f' },
+    { "x-res",  required_argument, NULL, 'x' },
+    { "y-res",  required_argument, NULL, 'y' },
+    { "frate",  required_argument, NULL, 'r' },
     { "count",  required_argument, NULL, 'c' },
     { 0, 0, 0, 0 }
 };
 
-int main(int argc, char **argv)
-{
-    dev_name = "/dev/video0";
+int main(int argc, char **argv) {
+    //dev_name = "/dev/video0";
 
     for (;;) {
         int idx;
         int c;
 
-        c = getopt_long(argc, argv,short_options, long_options, &idx);
+        c = getopt_long(argc, argv, short_options, long_options, &idx);
 
         if (-1 == c)
             break;
 
         switch (c) {
             case 0: /* getopt_long() flag */
-            break;
+                break;
 
-        case 'd':
-            dev_name = optarg;
-            break;
+            case 'd':
+                dev_name = optarg;
+                break;
 
-        case 'h':
+            case 'h':
                 usage(stdout, argc, argv);
                 exit(EXIT_SUCCESS);
 
-        case 'i':
-            get_info = 1;
-            break;
+            case 'i':
+                get_info = 1;
+                break;
 
-        case 'm':
-            io = IO_METHOD_MMAP;
-            break;
+            case 's':
+                errno = 0;
+                srv_port = strtol(optarg, NULL, 0);
+                if (errno)
+                    errno_exit(optarg);
+                start_server();
+                break;
 
-        case 'r':
-            io = IO_METHOD_READ;
-            break;
+            case 'x':
+                errno = 0;
+                x_res = strtol(optarg, NULL, 0);
+                if (errno)
+                    errno_exit(optarg);
+                break;
 
-        case 'u':
-            io = IO_METHOD_USERPTR;
-            break;
+            case 'y':
+                errno = 0;
+                y_res = strtol(optarg, NULL, 0);
+                if (errno)
+                    errno_exit(optarg);
+                break;
 
-        case 'o':
-            out_buf = 1;
-            break;
+            case 'f':
+                file_name = optarg;
+                file_ptr = fopen(file_name, "wb");
+                if (!file_ptr)
+                    errno_exit(optarg);
+                break;
 
-        case 'f':
-            force_format = 1;
-            break;
+            case 'r':
+                errno = 0;
+                frame_rate = strtol(optarg, NULL, 0);
+                if (errno)
+                    errno_exit(optarg);
+                break;
 
-        case 'c':
-            errno = 0;
-            frame_count = strtol(optarg, NULL, 0);
-            if (errno)
-                errno_exit(optarg);
-            break;
+            case 'c':
+                errno = 0;
+                frame_count = strtol(optarg, NULL, 0);
+                if (errno)
+                    errno_exit(optarg);
+                break;
 
-        default:
-            usage(stderr, argc, argv);
-            exit(EXIT_FAILURE);
+            default:
+                usage(stderr, argc, argv);
+                exit(EXIT_FAILURE);
         }
     }
 
@@ -698,6 +792,9 @@ int main(int argc, char **argv)
     stop_capturing();
     uninit_device();
     close_device();
+
+    // Close Server's socket
+    close(sock_fd);
 
     fprintf(stderr, "\n");
     return 0;
