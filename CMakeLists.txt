@@ -15,3 +15,11 @@ target_link_libraries(webcam_x264  Threads::Threads)
 
 add_executable(v4l2-example  v4l2-example.c)
 target_link_libraries(v4l2-example  Threads::Threads)
+
+add_executable(imx264-encode  imx264-encode.c)
+target_link_libraries(imx264-encode  Threads::Threads)
+
+
+add_subdirectory(converter)
+
+
