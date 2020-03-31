@@ -10,4 +10,4 @@ set(CMAKE_C_FLAGS "-mtune=cortex-a9 -mfpu=neon -mvectorize-with-neon-quad")
 add_executable(yuy2-to-nv12  main.c common.h)
 
 
-add_executable(neon-tst  neon-tst.c)
+#add_executable(neon-tst  neon-tst.c)
