@@ -1,2 +1,4 @@
 converter/tmp-pic*
 converter/stream*
+
+cmake-build-debug*
