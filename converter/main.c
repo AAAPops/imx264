@@ -32,6 +32,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <sys/time.h>
+#include <arm_neon.h>
 
 #include "common.h"
 
@@ -164,6 +165,112 @@ int prepare_buffs(struct _instance *i) {
 }
 
 
+int yuyv_to_nv12_neon(char *in_buff_ptr, size_t in_buff_sz,
+                 char *out_buff_ptr, size_t out_buff_sz,
+                 uint16_t width, uint16_t height)
+{
+    // Sanity checks first
+    {
+        if (width % 4 != 0) {
+            err("Frame width must be a multiple of 4!");
+            return -1;
+        }
+        if (height % 2 != 0) {
+            err("Frame height must be a multiple of 2!");
+            return -1;
+        }
+
+        u_int8_t macropix = 8;
+        uint32_t n_macro_pix = width * height / macropix;
+
+        uint8_t mpix422_sz = 16;
+        uint32_t YCrCb_422_sz = n_macro_pix * mpix422_sz;
+        if (in_buff_sz != YCrCb_422_sz) {
+            err("Input buffer size must be exactly %d bytes", YCrCb_422_sz);
+            return -1;
+        }
+
+        uint8_t mpix420_sz = 12;
+        uint32_t YCrCb_420_sz = n_macro_pix * mpix420_sz;
+        if (out_buff_sz < YCrCb_420_sz) {
+            err("Output buffer size must be at least %d bytes", YCrCb_420_sz);
+            return -1;
+        }
+    }
+
+    // Main converter body
+    int line_n, chunk_n;
+
+    uint8_t *Y_plane_start = (uint8_t*)out_buff_ptr;
+    size_t Y_offset = 0;
+    uint8_t *CbCr_plane_start = (uint8_t*)(out_buff_ptr + width * height);
+    size_t CbCr_offset = 0;
+
+    size_t in_buff_offset = 0;
+
+    int yuyv_line_len = (width / 2) * 4;
+    uint8x16x2_t chunk_128x2;
+
+    struct timeval  tv;
+    gettimeofday(&tv, NULL);
+    double time_begin = ((double)tv.tv_sec) * 1000 +
+                        ((double)tv.tv_usec) / 1000;
+
+    for( line_n = 0; line_n < height; line_n++ ) {
+        for( chunk_n = 0; chunk_n < yuyv_line_len / 32 ; chunk_n++)
+        {
+            in_buff_offset = yuyv_line_len * line_n + 32 * chunk_n;
+            chunk_128x2 = vld2q_u8( (uint8_t*)in_buff_ptr + in_buff_offset);
+
+            vst1q_u8(Y_plane_start + Y_offset, chunk_128x2.val[0]);
+            Y_offset += 16;
+
+            if( line_n % 2 == 0 ) {
+                vst1q_u8(CbCr_plane_start + CbCr_offset, chunk_128x2.val[1]);
+                CbCr_offset += 16;
+            }
+
+        }
+
+        if( yuyv_line_len % 32 != 0 ) {
+            uint8_t bytes_left = yuyv_line_len % 32;
+            in_buff_offset += 32;
+
+            for( uint8_t iter = 0; iter < bytes_left; iter += 4 ) {
+
+                Y_plane_start[Y_offset] = in_buff_ptr[in_buff_offset + 0];
+                Y_offset++;
+
+                Y_plane_start[Y_offset] = in_buff_ptr[in_buff_offset + 2];
+                Y_offset++;
+
+                if (line_n % 2 == 0) {
+                    CbCr_plane_start[CbCr_offset] = in_buff_ptr[in_buff_offset + 1];
+                    CbCr_offset++;
+                    CbCr_plane_start[CbCr_offset] = in_buff_ptr[in_buff_offset + 3];
+                    CbCr_offset++;
+                }
+
+                in_buff_offset += 4;
+            }
+        }
+
+    }
+
+    gettimeofday(&tv, NULL);
+    double time_end = ((double)tv.tv_sec) * 1000 +
+                      ((double)tv.tv_usec) / 1000 ;
+    dbg("Execute time 'yuyv_to_nv12()' = %f(ms)", time_end - time_begin);
+
+    dbg("Total lines in picture = %d", line_n);
+    dbg("Y' plane start pos: 0, end pos: %d [0x%x]", Y_offset - 1, Y_offset - 1);
+    dbg("CbCr plane start pos: %d, end pos: %d [0x%x]",
+        width * height, width * height + CbCr_offset - 1,
+        width * height + CbCr_offset - 1);
+
+    return 0;
+}
+
 
 int yuyv_to_nv12(char *in_buff_ptr, size_t in_buff_sz,
         char *out_buff_ptr, size_t out_buff_sz,
@@ -186,14 +293,14 @@ int yuyv_to_nv12(char *in_buff_ptr, size_t in_buff_sz,
         uint8_t mpix422_sz = 16;
         uint32_t YCrCb_422_sz = n_macro_pix * mpix422_sz;
         if (in_buff_sz != YCrCb_422_sz) {
-            err("Input buffer size must be exactly %ld bytes", YCrCb_422_sz);
+            err("Input buffer size must be exactly %d bytes", YCrCb_422_sz);
             return -1;
         }
 
         uint8_t mpix420_sz = 12;
         uint32_t YCrCb_420_sz = n_macro_pix * mpix420_sz;
         if (out_buff_sz < YCrCb_420_sz) {
-            err("Output buffer size must be at least %ld bytes", YCrCb_420_sz);
+            err("Output buffer size must be at least %d bytes", YCrCb_420_sz);
             return -1;
         }
     }
@@ -292,7 +399,7 @@ int main_loop(struct _instance *inst)
         if( ret == -1 ) return -1;  // -1 Common error of file reading
         if( ret ==  1 ) return  0;  //  1 Get End of File
 
-        ret = yuyv_to_nv12(inst->in_buff_ptr, inst->in_buff_sz,
+        ret = yuyv_to_nv12_neon(inst->in_buff_ptr, inst->in_buff_sz,
                 inst->out_buff_ptr,  inst->out_buff_sz,
                 inst->width, inst->height);
         if( ret != 0 ) return -1;
