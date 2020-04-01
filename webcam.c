@@ -1,27 +1,57 @@
-#include "webcam.h"
-#include <signal.h>
-
-#define WEBCAM_TEST 1
-
-/**
- * Keeping tabs on opened webcam devices
+/*
+ *  V4L2 video capture example
+ *
+ *  This program can be used and distributed without restrictions.
+ *
+ *      This program is provided with the V4L2 API
+ * see https://linuxtv.org/docs.php for more information
  */
-static webcam_t *_w[16] = {
-    NULL, NULL, NULL, NULL,
-    NULL, NULL, NULL, NULL,
-    NULL, NULL, NULL, NULL,
-    NULL, NULL, NULL, NULL
-};
 
-/**
- * Private sigaction to catch segmentation fault
- */
-static struct sigaction *sa;
+#define _GNU_SOURCE
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <assert.h>
 
-/**
- * Private function for successfully ioctl-ing the v4l2 device
- */
-static int _ioctl(int fh, int request, void *arg)
+#include <getopt.h>             /* getopt_long() */
+
+#include <fcntl.h>              /* low-level i/o */
+#include <unistd.h>
+#include <errno.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/time.h>
+#include <sys/mman.h>
+#include <sys/ioctl.h>
+
+#include <linux/videodev2.h>
+
+#include <netinet/in.h>
+#include <sys/socket.h>
+
+#include "common.h"
+
+#define SA struct sockaddr
+#define CLEAR(x) memset(&(x), 0, sizeof(x))
+
+
+
+
+
+FILE                    *file_ptr;
+char                    *file_name;
+
+int                     srv_port;
+int                     sock_fd = -1;
+int                     conn_fd = -1;
+
+static void errno_exit(const char *s)
+{
+    fprintf(stderr, "%s: error %d, %m \n", s, errno);
+    exit(EXIT_FAILURE);
+}
+
+static int xioctl(int fh, int request, void *arg)
 {
     int r;
 
@@ -32,519 +62,621 @@ static int _ioctl(int fh, int request, void *arg)
     return r;
 }
 
-/**
- * Private function to clamp a double value to the nearest int
- * between 0 and 255
- */
-static uint8_t clamp(double x)
-{
-    int r = x;
+static void process_image(const void *buff_ptr, int buff_size) {
+    // send the buffer to 'stdout'
+    if (file_ptr)
+        fwrite(buff_ptr, buff_size, 1, file_ptr);
 
-    if (r < 0) return 0;
-    else if (r > 255) return 255;
-
-    return r;
-}
-
-/**
- * Handler for segmentation faults
- * This should go through all the opened webcams in _w and
- * clean them up.
- */
-static void handler(int sig, siginfo_t *si, void *unused)
-{
-    int i = 0;
-    fprintf(stderr, "A segmentation fault occured. Cleaning up...\n");
-
-    for(i = 0; i < 16; i++) {
-        if (_w[i] == NULL) continue;
-
-        // If webcam is streaming, unlock the mutex, and stop streaming
-        if (_w[i]->streaming) {
-            pthread_mutex_unlock(&_w[i]->mtx_frame);
-            webcam_stream(_w[i], false);
-        }
-        webcam_close(_w[i]);
-    }
-
-    exit(EXIT_FAILURE);
-}
-
-/**
- * Private function to convert a YUYV buffer to a RGB frame and store it
- * within the given buffer structure
- *
- * http://linuxtv.org/downloads/v4l-dvb-apis/colorspaces.html
- */
-static void convertToRGB(struct buffer buf, struct buffer *frame)
-{
-    size_t i;
-    uint8_t y, u, v;
-
-    int uOffset = 0;
-    int vOffset = 0;
-
-    double R, G, B;
-    double Y, Pb, Pr;
-
-    // Initialize frame
-    if (frame->start == NULL) {
-        frame->length = buf.length / 2 * 3;
-        frame->start = calloc(frame->length, sizeof(char));
-    }
-
-    // Go through the YUYV buffer and calculate RGB pixels
-    for (i = 0; i < buf.length; i += 2)
-    {
-        uOffset = (i % 4 == 0) ? 1 : -1;
-        vOffset = (i % 4 == 2) ? 1 : -1;
-
-        y = buf.start[i];
-        u = (i + uOffset > 0 && i + uOffset < buf.length) ? buf.start[i + uOffset] : 0x80;
-        v = (i + vOffset > 0 && i + vOffset < buf.length) ? buf.start[i + vOffset] : 0x80;
-
-        Y =  (255.0 / 219.0) * (y - 0x10);
-        Pb = (255.0 / 224.0) * (u - 0x80);
-        Pr = (255.0 / 224.0) * (v - 0x80);
-
-        R = 1.0 * Y + 0.000 * Pb + 1.402 * Pr;
-        G = 1.0 * Y + 0.344 * Pb - 0.714 * Pr;
-        B = 1.0 * Y + 1.772 * Pb + 0.000 * Pr;
-
-        frame->start[i / 2 * 3    ] = clamp(R);
-        frame->start[i / 2 * 3 + 1] = clamp(G);
-        frame->start[i / 2 * 3 + 2] = clamp(B);
-    }
-}
-
-/**
- * Private function to equalize the Y-histogram for contrast
- * using a cumulative distribution function
- *
- * Thought this would fix the colors in the first instance,
- * but it did not. Nevertheless a good function to keep.
- *
- * http://en.wikipedia.org/wiki/Histogram_equalization
- */
-static void equalize(struct buffer *buf)
-{
-    size_t i;
-    uint16_t depth = 1 << 8;
-    uint8_t value;
-
-    size_t *histogram = calloc(depth, sizeof(size_t));
-    size_t *cdf = calloc(depth, sizeof(size_t));
-    size_t cdf_min = 0;
-
-    // Skip CbCr components
-    for (i = 0; i < buf->length; i += 2)
-    {
-        histogram[buf->start[i]]++;
-    }
-
-    // Create cumulative distribution
-    for (i = 0; i < depth; i++) {
-        cdf[i] = 0 == i ? histogram[i] : cdf[i - 1] + histogram[i];
-        if (cdf_min == 0 && cdf[i] > 0) cdf_min = cdf[i];
-    }
-
-    // Equalize the Y values
-    for (i = 0; i < buf->length; i += 2) {
-        value = buf->start[i];
-        buf->start[i] = 1.0 * (cdf[value] - cdf_min) / (buf->length / 2 - cdf_min) * (depth - 1);
-    }
-}
-
-/**
- * Open the webcam on the given device and return a webcam
- * structure.
- */
-struct webcam* webcam_open(const char *dev)
-{
-    struct stat st;
-
-    struct v4l2_capability cap;
-    struct v4l2_format fmt;
-
-    uint16_t min;
-
-    int fd;
-    struct webcam *w;
-
-    // Prepare signal handler if not yet
-    if (sa == NULL) {
-        sa = calloc(1, sizeof(struct sigaction));
-        sa->sa_flags = SA_SIGINFO;
-        sigemptyset(&sa->sa_mask);
-        sa->sa_sigaction = handler;
-        sigaction(SIGSEGV, sa, NULL);
-    }
-
-    // Check if the device path exists
-    if (-1 == stat(dev, &st)) {
-        fprintf(stderr, "Cannot identify '%s': %d, %s\n",
-                dev, errno, strerror(errno));
-        return NULL;
-    }
-
-    // Should be a character device
-    if (!S_ISCHR(st.st_mode)) {
-        fprintf(stderr, "%s is no device\n", dev);
-        return NULL;
-    }
-
-    // Create a file descriptor
-    fd = open(dev, O_RDWR | O_NONBLOCK, 0);
-    if (-1 == fd) {
-        fprintf(stderr, "Cannot open'%s': %d, %s\n",
-                dev, errno, strerror(errno));
-        return NULL;
-    }
-
-    // Query the webcam capabilities
-    if (-1 == _ioctl(fd, VIDIOC_QUERYCAP, &cap)) {
-        if (EINVAL == errno) {
-            fprintf(stderr, "%s is no V4L2 device\n", dev);
-            return NULL;
-        } else {
-            fprintf(stderr, "%s: could not fetch video capabilities\n", dev);
-            return NULL;
+    // send the buffer to client
+    if ( conn_fd > 0 ) {
+        int n_bytes = write(conn_fd, buff_ptr, buff_size);
+        if ( n_bytes != buff_size ) {
+            fprintf(stderr, "n_bytes %d == buff_size %d \n", n_bytes, buff_size);
+            exit(EXIT_FAILURE);
         }
     }
 
-    // Needs to be a capturing device
-    if (!(cap.capabilities & V4L2_CAP_VIDEO_CAPTURE)) {
-        fprintf(stderr, "%s is no video capture device\n", dev);
-        return NULL;
-    }
-
-    // Prepare webcam structure
-    w = calloc(1, sizeof(struct webcam));
-    w->fd = fd;
-    w->name = strdup(dev);
-    w->frame.start = NULL;
-    w->frame.length = 0;
-    pthread_mutex_init(&w->mtx_frame, NULL);
-
-    // Initialize buffers
-    w->nbuffers = 0;
-    w->buffers = NULL;
-
-    // Store webcam in _w
-    int i = 0;
-    for(; i < 16; i++) {
-        if (_w[i] == NULL) {
-            _w[i] = w;
-            break;
-        }
-    }
-
-    // Request supported formats
-    struct v4l2_fmtdesc fmtdesc;
-    uint32_t idx = 0;
-    char *pixelformat = calloc(5, sizeof(char));
-    for(;;) {
-        fmtdesc.index = idx;
-        fmtdesc.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-
-        if (-1 == _ioctl(w->fd, VIDIOC_ENUM_FMT, &fmtdesc)) break;
-
-        memset(w->formats[idx], 0, 5);
-        memcpy(&w->formats[idx][0], &fmtdesc.pixelformat, 4);
-        fprintf(stderr, "%s: Found format: %s - %s\n", w->name, w->formats[idx], fmtdesc.description);
-        idx++;
-    }
-
-    return w;
+    fflush(stderr);
+    fprintf(stderr, ".");
+    fflush(stdout);
 }
 
-/**
- * Closes the webcam
- *
- * Also releases the buffers, and frees up memory
- */
-void webcam_close(webcam_t *w)
+static int read_frame(void)
 {
-    uint16_t i;
-
-    // Clear frame
-    free(w->frame.start);
-    w->frame.length = 0;
-
-    // Release memory-mapped buffers
-    for (i = 0; i < w->nbuffers; i++) {
-        munmap(w->buffers[i].start, w->buffers[i].length);
-    }
-
-    // Free allocated resources
-    free(w->buffers);
-    free(w->name);
-
-    // Close the webcam file descriptor, and free the memory
-    close(w->fd);
-    free(w);
-}
-
-/**
- * Sets the webcam to capture at the given width and height
- */
-void webcam_resize(webcam_t *w, uint16_t width, uint16_t height)
-{
-    uint32_t i;
-    struct v4l2_format fmt;
     struct v4l2_buffer buf;
+    unsigned int i;
 
-    // Use YUYV as default for now
-    CLEAR(fmt);
-    fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    fmt.fmt.pix.width = width;
-    fmt.fmt.pix.height = height;
-    fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_YUYV;
-    fmt.fmt.pix.colorspace = V4L2_COLORSPACE_REC709;
-    fprintf(stderr, "%s: requesting image format %ux%u\n", w->name, width, height);
-    _ioctl(w->fd, VIDIOC_S_FMT, &fmt);
+    switch (io) {
+        case IO_METHOD_READ:
+            if (-1 == read(wcam_fd, buffers[0].start, buffers[0].length)) {
+                switch (errno) {
+                    case EAGAIN:
+                        return 0;
 
-    // Storing result
-    w->width = fmt.fmt.pix.width;
-    w->height = fmt.fmt.pix.height;
-    w->colorspace = fmt.fmt.pix.colorspace;
+                    case EIO:
+                        /* Could ignore EIO, see spec. */
+                        /* fall through */
 
-    char *pixelformat = calloc(5, sizeof(char));
-    memcpy(pixelformat, &fmt.fmt.pix.pixelformat, 4);
-    fprintf(stderr, "%s: set image format to %ux%u using %s\n", w->name, w->width, w->height, pixelformat);
+                    default:
+                        errno_exit("read");
+                }
+            }
 
-    // Buffers have been created before, so clear them
-    if (NULL != w->buffers) {
-        for (i = 0; i < w->nbuffers; i++) {
-            munmap(w->buffers[i].start, w->buffers[i].length);
+            process_image(buffers[0].start, buffers[0].length);
+            break;
+
+        case IO_METHOD_MMAP:
+            CLEAR(buf);
+
+            buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+            buf.memory = V4L2_MEMORY_MMAP;
+
+            if (-1 == xioctl(wcam_fd, VIDIOC_DQBUF, &buf)) {
+                switch (errno) {
+                    case EAGAIN:
+                        return 0;
+
+                    case EIO:
+                        /* Could ignore EIO, see spec. */
+                        /* fall through */
+
+                    default:
+                        errno_exit("VIDIOC_DQBUF");
+                }
+            }
+
+            assert(buf.index < n_buffers);
+
+            process_image(buffers[buf.index].start, buf.bytesused);
+
+            if (-1 == xioctl(wcam_fd, VIDIOC_QBUF, &buf))
+                errno_exit("VIDIOC_QBUF");
+            break;
+
+        case IO_METHOD_USERPTR:
+                CLEAR(buf);
+
+                buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+                buf.memory = V4L2_MEMORY_USERPTR;
+
+                if (-1 == xioctl(wcam_fd, VIDIOC_DQBUF, &buf)) {
+                        switch (errno) {
+                        case EAGAIN:
+                                return 0;
+
+                        case EIO:
+                                /* Could ignore EIO, see spec. */
+
+                                /* fall through */
+
+                        default:
+                                errno_exit("VIDIOC_DQBUF");
+                        }
+                }
+
+                for (i = 0; i < n_buffers; ++i)
+                        if (buf.m.userptr == (unsigned long)buffers[i].start
+                            && buf.length == buffers[i].length)
+                                break;
+
+                assert(i < n_buffers);
+
+                process_image((void *)buf.m.userptr, buf.bytesused);
+
+                if (-1 == xioctl(wcam_fd, VIDIOC_QBUF, &buf))
+                        errno_exit("VIDIOC_QBUF");
+                break;
         }
 
-        free(w->buffers);
+        return 1;
+}
+
+static void mainloop(void)
+{
+    unsigned int count;
+
+    count = frame_count;
+
+    while (count-- > 0) {
+        for (;;) {
+            fd_set fds;
+            struct timeval tv;
+            int r;
+
+            FD_ZERO(&fds);
+            FD_SET(wcam_fd, &fds);
+
+            /* Timeout. */
+            tv.tv_sec = 2;
+            tv.tv_usec = 0;
+
+            r = select(wcam_fd + 1, &fds, NULL, NULL, &tv);
+
+            if (-1 == r) {
+                if (EINTR == errno)
+                    continue;
+                errno_exit("select");
+            }
+
+            if (0 == r) {
+                fprintf(stderr, "select timeout \n");
+                exit(EXIT_FAILURE);
+            }
+
+            if (read_frame())
+                break;
+            /* EAGAIN - continue select loop. */
+        }
+    }
+}
+
+static void stop_capturing(void)
+{
+    enum v4l2_buf_type type;
+
+    switch (io) {
+        case IO_METHOD_READ:
+            /* Nothing to do. */
+            break;
+
+        case IO_METHOD_MMAP:
+        case IO_METHOD_USERPTR:
+            type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+            if (-1 == xioctl(wcam_fd, VIDIOC_STREAMOFF, &type))
+                errno_exit("VIDIOC_STREAMOFF");
+            break;
+    }
+}
+
+static void start_capturing(void)
+{
+    unsigned int i;
+    enum v4l2_buf_type type;
+
+    switch (io) {
+        case IO_METHOD_READ:
+            /* Nothing to do. */
+            break;
+
+        case IO_METHOD_MMAP:
+            for (i = 0; i < n_buffers; ++i) {
+                struct v4l2_buffer buf;
+
+                CLEAR(buf);
+                buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+                buf.memory = V4L2_MEMORY_MMAP;
+                buf.index = i;
+
+                if (-1 == xioctl(wcam_fd, VIDIOC_QBUF, &buf))
+                    errno_exit("VIDIOC_QBUF");
+            }
+
+            type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+            if (-1 == xioctl(wcam_fd, VIDIOC_STREAMON, &type))
+                errno_exit("VIDIOC_STREAMON");
+            break;
+
+        case IO_METHOD_USERPTR:
+            for (i = 0; i < n_buffers; ++i) {
+                struct v4l2_buffer buf;
+
+                CLEAR(buf);
+                buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+                buf.memory = V4L2_MEMORY_USERPTR;
+                buf.index = i;
+                buf.m.userptr = (unsigned long)buffers[i].start;
+                buf.length = buffers[i].length;
+
+                if (-1 == xioctl(wcam_fd, VIDIOC_QBUF, &buf))
+                    errno_exit("VIDIOC_QBUF");
+            }
+            type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+            if (-1 == xioctl(wcam_fd, VIDIOC_STREAMON, &type))
+                errno_exit("VIDIOC_STREAMON");
+            break;
+    }
+}
+
+static void uninit_device(void)
+{
+    unsigned int i;
+
+    switch (io) {
+        case IO_METHOD_READ:
+            free(buffers[0].start);
+            break;
+
+        case IO_METHOD_MMAP:
+            for (i = 0; i < n_buffers; ++i)
+                if (-1 == munmap(buffers[i].start, buffers[i].length))
+                    errno_exit("munmap");
+                break;
+
+        case IO_METHOD_USERPTR:
+            for (i = 0; i < n_buffers; ++i)
+                free(buffers[i].start);
+            break;
     }
 
-    // Request the webcam's buffers for memory-mapping
+    free(buffers);
+}
+
+static void init_read(unsigned int buffer_size)
+{
+    buffers = calloc(1, sizeof(*buffers));
+
+    if (!buffers) {
+        fprintf(stderr, "Out of memory \n");
+        exit(EXIT_FAILURE);
+    }
+
+    buffers[0].length = buffer_size;
+    buffers[0].start = malloc(buffer_size);
+
+    if (!buffers[0].start) {
+        fprintf(stderr, "Out of memory \n");
+        exit(EXIT_FAILURE);
+    }
+}
+
+static void init_mmap(void)
+{
     struct v4l2_requestbuffers req;
+
     CLEAR(req);
 
     req.count = 4;
     req.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     req.memory = V4L2_MEMORY_MMAP;
 
-    if (-1 == _ioctl(w->fd, VIDIOC_REQBUFS, &req)) {
+    if (-1 == xioctl(wcam_fd, VIDIOC_REQBUFS, &req)) {
         if (EINVAL == errno) {
-            fprintf(stderr, "%s does not support memory mapping\n", w->name);
-            return;
+            fprintf(stderr, "%s does not support memory mapping \n", dev_name);
+            exit(EXIT_FAILURE);
         } else {
-            fprintf(stderr, "Unknown error with VIDIOC_REQBUFS: %d\n", errno);
-            return;
+            errno_exit("VIDIOC_REQBUFS");
         }
     }
 
-    // Needs at least 2 buffers
     if (req.count < 2) {
-        fprintf(stderr, "Insufficient buffer memory on %s\n", w->name);
-        return;
+        fprintf(stderr, "Insufficient buffer memory on %s \n", dev_name);
+        exit(EXIT_FAILURE);
     }
 
-    // Storing buffers in webcam structure
-    fprintf(stderr, "Preparing %d buffers for %s\n", req.count, w->name);
-    w->nbuffers = req.count;
-    w->buffers = calloc(w->nbuffers, sizeof(struct buffer));
-
-    if (!w->buffers) {
-        fprintf(stderr, "Out of memory\n");
-        return;
+    buffers = calloc(req.count, sizeof(*buffers));
+    if (!buffers) {
+        fprintf(stderr, "Out of memory \n");
+        exit(EXIT_FAILURE);
     }
 
-    // Prepare buffers to be memory-mapped
-    for (i = 0; i < w->nbuffers; ++i) {
+    for (n_buffers = 0; n_buffers < req.count; ++n_buffers) {
+        struct v4l2_buffer buf;
+
         CLEAR(buf);
 
-        buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-        buf.memory = V4L2_MEMORY_MMAP;
-        buf.index = i;
+        buf.type        = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        buf.memory      = V4L2_MEMORY_MMAP;
+        buf.index       = n_buffers;
 
-        if (-1 == _ioctl(w->fd, VIDIOC_QUERYBUF, &buf)) {
-            fprintf(stderr, "Could not query buffers on %s\n", w->name);
-            return;
+        if (-1 == xioctl(wcam_fd, VIDIOC_QUERYBUF, &buf))
+            errno_exit("VIDIOC_QUERYBUF");
+
+        buffers[n_buffers].length = buf.length;
+        buffers[n_buffers].start =
+                mmap(NULL /* start anywhere */,
+                        buf.length,
+                        PROT_READ | PROT_WRITE /* required */,
+                        MAP_SHARED /* recommended */,
+                        wcam_fd, buf.m.offset);
+
+        if (MAP_FAILED == buffers[n_buffers].start)
+            errno_exit("mmap");
+    }
+}
+
+static void init_userp(unsigned int buffer_size)
+{
+        struct v4l2_requestbuffers req;
+
+        CLEAR(req);
+
+        req.count  = 4;
+        req.type   = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        req.memory = V4L2_MEMORY_USERPTR;
+
+        if (-1 == xioctl(wcam_fd, VIDIOC_REQBUFS, &req)) {
+                if (EINVAL == errno) {
+                        fprintf(stderr, "%s does not support "
+                                 "user pointer i/on", dev_name);
+                        exit(EXIT_FAILURE);
+                } else {
+                        errno_exit("VIDIOC_REQBUFS");
+                }
         }
 
-        w->buffers[i].length = buf.length;
-        w->buffers[i].start = mmap(NULL, buf.length, PROT_READ | PROT_WRITE, MAP_SHARED, w->fd, buf.m.offset);
+        buffers = calloc(4, sizeof(*buffers));
 
-        if (MAP_FAILED == w->buffers[i].start) {
-            fprintf(stderr, "Mmap failed\n");
-            return;
+        if (!buffers) {
+                fprintf(stderr, "Out of memory\\n");
+                exit(EXIT_FAILURE);
+        }
+
+        for (n_buffers = 0; n_buffers < 4; ++n_buffers) {
+                buffers[n_buffers].length = buffer_size;
+                buffers[n_buffers].start = malloc(buffer_size);
+
+                if (!buffers[n_buffers].start) {
+                        fprintf(stderr, "Out of memory\\n");
+                        exit(EXIT_FAILURE);
+                }
+        }
+}
+
+
+static void get_device_info(void)
+{
+    struct v4l2_fmtdesc fmtdesc;
+    struct v4l2_frmsizeenum framesize;
+
+    int index, index2;
+
+    CLEAR(fmtdesc);
+    CLEAR(framesize);
+
+    fprintf(stderr, "'%s' support formats: \n", dev_name);
+
+    for( index = 0; ;index++ ) {
+        fmtdesc.index = index;
+        fmtdesc.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+
+        if( ioctl(wcam_fd, VIDIOC_ENUM_FMT, &fmtdesc) < 0 )
+            if (errno == EINVAL)
+                exit(0);
+            else
+                errno_exit("VIDIOC_ENUM_FMT");
+
+        fprintf(stderr, " %s \n", fmtdesc.description);
+        for( index2 = 0; ;index2++ ) {
+            framesize.index = index2;
+            framesize.pixel_format = fmtdesc.pixelformat;
+
+            if( ioctl(wcam_fd, VIDIOC_ENUM_FRAMESIZES, &framesize) < 0 )
+                if (errno == EINVAL)
+                    break;
+                 else
+                     errno_exit("VIDIOC_ENUM_FRAMESIZES");
+
+            if( framesize.type == V4L2_FRMSIZE_TYPE_DISCRETE ) {
+                fprintf(stderr, "\t\t\t %dx%d \n", framesize.discrete.width, framesize.discrete.height);
+                continue;
+            }
+
+            if( framesize.type == V4L2_FRMSIZE_TYPE_CONTINUOUS ||
+                framesize.type == V4L2_FRMSIZE_TYPE_STEPWISE)
+            {
+                fprintf(stderr, "\t\t\t Unsupported format \n");
+                continue;
+            }
         }
     }
 }
 
-/**
- * Reads a frame from the webcam, converts it into the RGB colorspace
- * and stores it in the webcam structure
- */
-static void webcam_read(struct webcam *w)
+
+
+static void init_device(void)
 {
-    struct v4l2_buffer buf;
+    struct v4l2_capability cap;
+    struct v4l2_cropcap cropcap;
+    struct v4l2_crop crop;
+    struct v4l2_format fmt;
+    struct v4l2_streamparm streamparm;
+    unsigned int min;
 
-    // Try getting an image from the device
-    for(;;) {
-        CLEAR(buf);
-        buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-        buf.memory = V4L2_MEMORY_MMAP;
+    if( ioctl(wcam_fd, VIDIOC_QUERYCAP, &cap) <0 ) {
+        fprintf(stderr, "'%s' is no V4L2 device: %m \n",dev_name);
+        exit(EXIT_FAILURE);
+    }
 
-        // Dequeue a (filled) buffer from the video device
-        if (-1 == _ioctl(w->fd, VIDIOC_DQBUF, &buf)) {
-            switch(errno) {
-                case EAGAIN:
-                    continue;
+    if (!(cap.capabilities & V4L2_CAP_VIDEO_CAPTURE)) {
+        fprintf(stderr, "%s is no video capture device: %m \n",dev_name);
+        exit(EXIT_FAILURE);
+    }
 
-                case EIO:
+    switch (io) {
+        case IO_METHOD_READ:
+            if (!(cap.capabilities & V4L2_CAP_READWRITE)) {
+                fprintf(stderr, "%s does not support read i/o \n", dev_name);
+                exit(EXIT_FAILURE);
+            }
+            break;
+
+        case IO_METHOD_MMAP:
+        case IO_METHOD_USERPTR:
+            if (!(cap.capabilities & V4L2_CAP_STREAMING)) {
+                fprintf(stderr, "%s does not support streaming i/o \n", dev_name);
+                exit(EXIT_FAILURE);
+            }
+            break;
+    }
+
+
+    /* Select video input, video standard and tune here. */
+    CLEAR(cropcap);
+
+    cropcap.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+
+    if (0 == xioctl(wcam_fd, VIDIOC_CROPCAP, &cropcap)) {
+        crop.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        crop.c = cropcap.defrect; /* reset to default */
+
+        if (-1 == xioctl(wcam_fd, VIDIOC_S_CROP, &crop)) {
+            switch (errno) {
+                case EINVAL:
+                    /* Cropping not supported. */
+                    break;
+
                 default:
-                    fprintf(stderr, "%d: Could not read from device %s\n", errno, w->name);
+                    /* Errors ignored. */
                     break;
             }
         }
+        } else {
+                /* Errors ignored. */
+        }
 
-        // Make sure we are not out of bounds
-        assert(buf.index < w->nbuffers);
-
-        // Lock frame mutex, and store RGB
-        pthread_mutex_lock(&w->mtx_frame);
-        convertToRGB(w->buffers[buf.index], &w->frame);
-        pthread_mutex_unlock(&w->mtx_frame);
-        break;
+    if ( get_info == 1 ) {
+        get_device_info();
     }
 
-    // Queue buffer back into the video device
-    if (-1 == _ioctl(w->fd, VIDIOC_QBUF, &buf)) {
-        fprintf(stderr, "Error while swapping buffers on %s\n", w->name);
-        return;
+    CLEAR(fmt);
+
+    fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    fmt.fmt.pix.width       = x_res;
+    fmt.fmt.pix.height      = y_res;
+    fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_YUYV;
+    fmt.fmt.pix.field       = V4L2_FIELD_INTERLACED;
+
+    if ( ioctl(wcam_fd, VIDIOC_S_FMT, &fmt) < 0 )
+        errno_exit("VIDIOC_S_FMT");
+
+
+    /* Buggy driver paranoia. */
+    min = fmt.fmt.pix.width * 2;
+    if (fmt.fmt.pix.bytesperline < min)
+        fmt.fmt.pix.bytesperline = min;
+    min = fmt.fmt.pix.bytesperline * fmt.fmt.pix.height;
+    if (fmt.fmt.pix.sizeimage < min)
+        fmt.fmt.pix.sizeimage = min;
+
+
+    // Set framerate
+    CLEAR(streamparm);
+    streamparm.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    if( xioctl(wcam_fd, VIDIOC_G_PARM, &streamparm) != 0 ) {
+        fprintf(stderr, "'%s' can not get stream params: %m \n",dev_name);
+        exit(EXIT_FAILURE);
     }
-}
 
-/**
- * The loop function for the webcam thread
- */
-static void *webcam_streaming(void *ptr)
-{
-    webcam_t *w = (webcam_t *)ptr;
+    streamparm.parm.capture.capturemode |= V4L2_CAP_TIMEPERFRAME;
+    streamparm.parm.capture.timeperframe.numerator = 1;
+    streamparm.parm.capture.timeperframe.denominator = frame_rate;
+    if( xioctl(wcam_fd, VIDIOC_S_PARM, &streamparm) !=0 ) {
+        fprintf(stderr, "'%s' can not set frame rate: %m \n",dev_name);
+        exit(EXIT_FAILURE);
+    }
 
-    while(w->streaming) webcam_read(w);
-}
+    switch (io) {
+        case IO_METHOD_READ:
+            init_read(fmt.fmt.pix.sizeimage);
+            break;
 
-/**
- * Tells the webcam to go into streaming mode, or to
- * stop streaming.
- * When going into streaming mode, it also creates
- * a thread running the webcam_streaming function.
- * When exiting the streaming mode, it sets the streaming
- * bit to false, and waits for the thread to finish.
- */
-void webcam_stream(struct webcam *w, bool flag)
-{
-    uint8_t i;
+        case IO_METHOD_MMAP:
+            init_mmap();
+            break;
 
-    struct v4l2_buffer buf;
-    enum v4l2_buf_type type;
-
-    if (flag) {
-        // Clear buffers
-        for (i = 0; i < w->nbuffers; i++) {
-            CLEAR(buf);
-            buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-            buf.memory = V4L2_MEMORY_MMAP;
-            buf.index = i;
-
-            if (-1 == _ioctl(w->fd, VIDIOC_QBUF, &buf)) {
-                fprintf(stderr, "Error clearing buffers on %s\n", w->name);
-                return;
-            }
-        }
-
-        // Turn on streaming
-        type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-        if (-1 == _ioctl(w->fd, VIDIOC_STREAMON, &type)) {
-            fprintf(stderr, "Could not turn on streaming on %s\n", w->name);
-            return;
-        }
-
-        // Set streaming to true and start thread
-        w->streaming = true;
-        pthread_create(&w->thread, NULL, webcam_streaming, (void *)w);
-    } else {
-        // Set streaming to false and wait for thread to finish
-        w->streaming = false;
-        pthread_join(w->thread, NULL);
-
-        // Turn off streaming
-        type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-        if (-1 == _ioctl(w->fd, VIDIOC_STREAMOFF, &type)) {
-            fprintf(stderr, "Could not turn streaming off on %s\n", w->name);
-            return;
-        }
+        case IO_METHOD_USERPTR:
+            init_userp(fmt.fmt.pix.sizeimage);
+            break;
     }
 }
 
-void webcam_grab(webcam_t *w, buffer_t *frame)
+static void close_device(void)
 {
-    // Locks the frame mutex so the grabber can copy
-    // the frame in its own return buffer.
-    pthread_mutex_lock(&w->mtx_frame);
+    if (-1 == close(wcam_fd))
+        errno_exit("close");
 
-    // Only copy frame if there is something in the webcam's frame buffer
-    if (w->frame.length > 0) {
-        // Initialize frame
-        if ((*frame).start == NULL) {
-            (*frame).start = calloc(w->frame.length, sizeof(char));
-            (*frame).length = w->frame.length;
-        }
-
-        memcpy((*frame).start, w->frame.start, w->frame.length);
-    }
-
-    pthread_mutex_unlock(&w->mtx_frame);
+    wcam_fd = -1;
 }
 
-/**
- * Main code
- */
-#ifdef WEBCAM_TEST
-int main(int argc, char **argv)
+static void open_device(void)
 {
-    int i = 0;
-    webcam_t *w = webcam_open("/dev/video0");
+    struct stat st;
 
-    // Prepare frame, and filename, and file to store frame in
-    buffer_t frame;
-    frame.start = NULL;
-    frame.length = 0;
-
-    char *fn = calloc(16, sizeof(char));
-    FILE *fp;
-
-    webcam_resize(w, 640, 480);
-    webcam_stream(w, true);
-    while(true) {
-        webcam_grab(w, &frame);
-
-        if (frame.length > 0) {
-            printf("Storing frame %d\n", i);
-            sprintf(fn, "frame_%d.rgb", i);
-            fp = fopen(fn, "w+");
-            fwrite(frame.start, frame.length, 1, fp);
-            fclose(fp);
-            i++;
-        }
-
-        if (i > 10) break;
+    wcam_fd = open(dev_name, O_RDWR | O_NONBLOCK, 0);
+    if ( wcam_fd < 0 ) {
+        fprintf(stderr, "Cannot open '%s': %m \n", dev_name);
+        exit(EXIT_FAILURE);
     }
-    webcam_stream(w, false);
-    webcam_close(w);
 
-    if (frame.start != NULL) free(frame.start);
-    free(fn);
+    if ( fstat(wcam_fd, &st) < 0 ) {
+        fprintf(stderr, "Cannot identify '%s': %m \n", dev_name);
+        exit(EXIT_FAILURE);
+    }
 
+    if (!S_ISCHR(st.st_mode)) {
+        fprintf(stderr, "'%s' is no char device \n", dev_name);
+        exit(EXIT_FAILURE);
+    }
+}
+
+static void start_server(void)
+{
+    struct sockaddr_in servaddr, cli;
+
+    // socket create and verification
+    sock_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock_fd == -1) {
+        fprintf(stderr, "Socket creation failed...[%m] \n");
+        exit(EXIT_FAILURE);
+    } else
+        fprintf(stderr, "Socket successfully created...\n");
+
+    int enable = 1;
+    if ( setsockopt(sock_fd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)) < 0 )
+        fprintf(stderr, "setsockopt(SO_REUSEADDR) failed \n");
+
+    bzero(&servaddr, sizeof(servaddr));
+    // assign IP, PORT
+    servaddr.sin_family = AF_INET;
+    servaddr.sin_addr.s_addr = htonl(INADDR_ANY); //INADDR_LOOPBACK for 127.0.0.1
+    servaddr.sin_port = htons(srv_port);
+
+    // Binding newly created socket to given IP and verification
+    if ((bind(sock_fd, (SA*)&servaddr, sizeof(servaddr))) != 0) {
+        fprintf(stderr, "Socket bind failed... [%m] \n");
+        exit(EXIT_FAILURE);;
+    } else
+        fprintf(stderr, "Socket successfully binded... \n");
+
+    // Now server is ready to listen and verification
+    if ((listen(sock_fd, 1)) != 0) {
+        fprintf(stderr, "Listen failed... [%m] \n");
+        exit(EXIT_FAILURE);
+    } else
+        fprintf(stderr, "Server listening on port #%d \n", srv_port);
+
+    int len = sizeof(cli);
+    // Accept the data packet from client and verification
+    conn_fd = accept(sock_fd, (SA*)&cli, &len);
+    if (conn_fd < 0) {
+        fprintf(stderr, "Server acccept failed... [%m]\n");
+        exit(EXIT_FAILURE);
+    } else
+        fprintf(stderr, "Server acccept the client...\n");
+}
+
+
+
+
+
+
+int main(int argc, char **argv) {
+    //dev_name = "/dev/video0";
+
+
+
+    open_device();
+    init_device();
+    start_capturing();
+    mainloop();
+    stop_capturing();
+    uninit_device();
+    close_device();
+
+    // Close Server's socket
+    close(sock_fd);
+
+    fprintf(stderr, "\n");
     return 0;
 }
-#endif
+

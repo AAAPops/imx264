@@ -1,55 +1,43 @@
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <sys/mman.h>
-#include <sys/ioctl.h>
-#include <fcntl.h>
+#ifndef INCLUDE_WEBCAM_H
+#define INCLUDE_WEBCAM_H
 
-
-#include <assert.h>
-#include <pthread.h>
-#include <stdlib.h>
-#include <stdio.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <stdint.h>
-#include <errno.h>
-#include <string.h>
-#include <unistd.h>
 
-#include <linux/videodev2.h>
+enum io_method {
+    IO_METHOD_READ,
+    IO_METHOD_MMAP,
+    IO_METHOD_USERPTR,
+};
 
-#define CLEAR(x) memset(&(x), 0, sizeof(x))
-
-/**
- * Buffer structure
- */
-typedef struct buffer {
-    uint8_t *start;
+struct buffer {
+    void   *start;
     size_t  length;
-} buffer_t;
+};
 
-/**
- * Webcam structure
- */
-typedef struct webcam {
-    char            *name;
-    int             fd;
-    buffer_t        *buffers;
-    uint8_t         nbuffers;
 
-    buffer_t        frame;
-    pthread_t       thread;
-    pthread_mutex_t mtx_frame;
+struct Webcam_inst {
+    char             wcam_name[128];
+    int              wcam_fd;
+    int              get_info;
+    struct buffer   *buffers;
+    uint8_t          n_buffers;
 
-    uint16_t        width;
-    uint16_t        height;
-    uint8_t         colorspace;
+    int              width;
+    int              height;
+    int              frame_rate;
+    int              frame_count;
 
-    char            formats[16][5];
-    bool            streaming;
-} webcam_t;
+    //    enum io_method   io;
+};
 
-webcam_t *webcam_open(const char *dev);
-void webcam_close(webcam_t *w);
-void webcam_resize(webcam_t *w, uint16_t width, uint16_t height);
-void webcam_stream(webcam_t *w, bool flag);
-void webcam_grab(webcam_t *w, buffer_t *frame);
+
+
+#define MACROPIX       8
+#define MPIX444_SZ    24
+#define MPIX422_SZ    16
+#define MPIX420_SZ    12
+
+
+#endif /* INCLUDE_WEBCAM_H */
