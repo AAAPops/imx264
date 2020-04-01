@@ -23,6 +23,7 @@
 
 #ifndef INCLUDE_COMMON_H
 #define INCLUDE_COMMON_H
+#define _GNU_SOURCE
 
 #include <stdbool.h>
 #include <stdio.h>
