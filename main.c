@@ -31,16 +31,41 @@ int main(int argc, char **argv) {
     set_defaults(&wcam_inst, &srv_inst);
 
     ret = pars_args(argc, argv, &wcam_inst, &srv_inst);
-    if( ret != 0 ) goto err;
+    if( ret != 0 )
+        goto err;
+
+    ret = srv_tcp_start(&srv_inst);
+    if( ret != 0 )
+        goto err;
 
     ret = wcam_open(&wcam_inst);
-    if( ret != 0 ) goto err;
+    if( ret != 0 )
+        goto err;
 
     ret = wcam_init(&wcam_inst);
-    if( ret != 0 ) goto err;
+    if( ret != 0 )
+        goto err;
 
+    ret = wcam_start_capturing(&wcam_inst);
+    if( ret != 0 )
+        goto err;
+
+    ret = wcam_mainloop(&wcam_inst, srv_inst.peer_fd);
+    if( ret != 0 )
+        goto err;
+
+    printf("\n");
+    wcam_stop_capturing(&wcam_inst);
+    wcam_uninit(&wcam_inst);
+    wcam_close(&wcam_inst);
+    srv_stop(&srv_inst);
 
     return 0;
 err:
+    printf("\n");
+    wcam_stop_capturing(&wcam_inst);
+    wcam_uninit(&wcam_inst);
+    wcam_close(&wcam_inst);
+    srv_stop(&srv_inst);
     return -1;
 }

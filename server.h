@@ -8,7 +8,14 @@
 struct Srv_inst {
     char    ip[128];
     int     port;
-    int     fd;
+    int     srv_fd;
+    int     peer_fd;
 };
+
+
+
+int srv_tcp_start(struct Srv_inst* srv_i);
+
+void srv_stop(struct Srv_inst* i);
 
 #endif

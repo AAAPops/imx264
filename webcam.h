@@ -16,6 +16,7 @@ enum io_method {
 struct Buffer {
     void   *start;
     size_t  length;
+    size_t  bytesused;
 };
 
 
@@ -26,12 +27,12 @@ struct Webcam_inst {
     struct Buffer    buffers[10];
     uint8_t          buffers_n;
 
+    struct Buffer    nv12_buff;
+
     int              width;
     int              height;
     int              frame_rate;
     int              frame_count;
-
-    //    enum io_method   io;
 };
 
 
@@ -43,5 +44,12 @@ struct Webcam_inst {
 
 int wcam_open(struct Webcam_inst* wcam_i);
 int wcam_init(struct Webcam_inst* wcam_i);
+
+int wcam_start_capturing(struct Webcam_inst* i);
+int wcam_mainloop(struct Webcam_inst* i, int peer_fd);
+
+void wcam_stop_capturing(struct Webcam_inst* i);
+void wcam_uninit(struct Webcam_inst* i);
+void wcam_close(struct Webcam_inst* i);
 
 #endif /* INCLUDE_WEBCAM_H */
