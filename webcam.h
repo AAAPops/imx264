@@ -45,10 +45,11 @@ struct Webcam_inst {
 int wcam_open(struct Webcam_inst* wcam_i);
 int wcam_init(struct Webcam_inst* wcam_i);
 
-int wcam_start_capturing(struct Webcam_inst* i);
-int wcam_mainloop(struct Webcam_inst* i, int peer_fd);
+int wcam_process_new_frame(struct Webcam_inst* i);
 
+int wcam_start_capturing(struct Webcam_inst* i);
 void wcam_stop_capturing(struct Webcam_inst* i);
+
 void wcam_uninit(struct Webcam_inst* i);
 void wcam_close(struct Webcam_inst* i);
 

@@ -133,29 +133,16 @@ static int yuyv_to_nv12_neon(char *in_buff_ptr, size_t in_buff_sz,
 }
 
 
-//static int process_image(int peer_fd, const void *buff_ptr, int buff_size) {
-static int process_image(int peer_fd, int buff_indx, struct Webcam_inst* i)
+static int process_image(struct Webcam_inst* i, uint32_t indx)
 {
     int ret;
 
-    ret = yuyv_to_nv12_neon(i->buffers[buff_indx].start,
-            i->buffers[buff_indx].bytesused,
-            i->nv12_buff.start,
-            i->nv12_buff.length,
+    ret = yuyv_to_nv12_neon(i->buffers[indx].start,
+            i->buffers[indx].length,
+            i->nv12_buff.start, i->nv12_buff.length,
             i->width, i->height);
     if( ret != 0 )
         return -1;
-
-    // send the buffer to 'stdout'
-    //if (file_ptr)
-    //    fwrite(buff_ptr, buff_size, 1, file_ptr);
-
-    // send the buffer to client
-    int n_bytes = write(peer_fd, i->nv12_buff.start, i->nv12_buff.length);
-    if( n_bytes != i->nv12_buff.length ) {
-        err("Client was not able to receive %d bytes", i->nv12_buff.length);
-        return -1;
-    }
 
     fflush(stderr);
     fprintf(stderr, ".");
@@ -165,7 +152,7 @@ static int process_image(int peer_fd, int buff_indx, struct Webcam_inst* i)
 }
 
 
-static int process_new_frame(int peer_fd, struct Webcam_inst* i)
+int wcam_process_new_frame(struct Webcam_inst* i)
 {
     int ret;
 
@@ -193,9 +180,12 @@ static int process_new_frame(int peer_fd, struct Webcam_inst* i)
 
     assert(buf.index < i->buffers_n);
 
-    i->buffers[buf.index].bytesused = buf.bytesused;
+    // По идее, buf.bytesused должно быть равно i->buffers[buf.index].length
+    // если же buf.bytesused меньше , то это говорит о том, что вебкамера не смогла
+    // заполнить весь буфер целиком и картинка начнет "рваться"
+    //i->buffers[buf.index].bytesused = buf.bytesused;
 
-    ret = process_image(peer_fd, buf.index, i);
+    ret = process_image(i, buf.index);
     if( ret == -1 )
         return -1;
 
@@ -207,7 +197,7 @@ static int process_new_frame(int peer_fd, struct Webcam_inst* i)
     return 0;
 }
 
-
+/*
 int wcam_mainloop(struct Webcam_inst* i, int peer_fd)
 {
     struct timeval tv;
@@ -224,7 +214,7 @@ int wcam_mainloop(struct Webcam_inst* i, int peer_fd)
         FD_ZERO(&fds);
         FD_SET(i->wcam_fd, &fds);
 
-        /* Timeout. */
+        // Timeout.
         tv.tv_sec = 2;
         tv.tv_usec = 0;
 
@@ -247,7 +237,7 @@ int wcam_mainloop(struct Webcam_inst* i, int peer_fd)
 
     return 0;
 }
-
+*/
 
 int wcam_start_capturing(struct Webcam_inst* i)
 {

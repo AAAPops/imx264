@@ -62,10 +62,33 @@ int srv_tcp_start(struct Srv_inst* i)
 
 void srv_stop(struct Srv_inst* i) {
     if( close(i->peer_fd) == -1 )
-        err("'Srv: peer close");
+        err("'Srv: peer close()");
 
     if( close(i->srv_fd) == -1 )
-        err("'Srv: server close");
+        err("'Srv: server close()");
 
     info("Server finished successful");
+}
+
+int srv_send_data(struct Srv_inst* i, void* buff_ptr, size_t buff_len) {
+    // send the buffer to 'stdout'
+    //if (file_ptr)
+    //    fwrite(buff_ptr, buff_size, 1, file_ptr);
+
+    // send the buffer to client
+    int n_bytes = send(i->peer_fd, buff_ptr, buff_len, MSG_NOSIGNAL);
+    if( n_bytes != buff_len ) {
+        err("Client was not able to receive %d bytes", buff_len);
+        return -1;
+    }
+
+    return 0;
+}
+
+
+int srv_get_data(struct Srv_inst* i) {
+
+    int n_bytes = recv(i->peer_fd, i->read_buff, sizeof(i->read_buff), 0);
+
+    return n_bytes;
 }
