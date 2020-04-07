@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
+#include <linux/videodev2.h>
 #include <sys/select.h>
 
 #include "common.h"
@@ -108,6 +109,7 @@ int main(int argc, char **argv) {
     {
         coda_inst.width = wcam_inst.width;
         coda_inst.height = wcam_inst.height;
+        coda_inst.framerate = wcam_inst.frame_rate;
 
         ret = coda_open(&coda_inst);
         if (ret != 0)
@@ -116,6 +118,37 @@ int main(int argc, char **argv) {
         ret = coda_init_nv12(&coda_inst);
         if (ret != 0)
             goto err;
+
+        ret = coda_init_h264(&coda_inst);
+        if (ret != 0)
+            goto err;
+
+        ret = coda_set_control(&coda_inst);
+        if (ret != 0)
+            goto err;
+
+        int indx;
+        for( indx = 0; indx < coda_inst.buff_264_n; indx++ ) {
+            ret = coda_queue_buf_h264(&coda_inst, indx);
+            if (ret != 0)
+                goto err;
+        }
+/*
+        for( indx = 0; indx < coda_inst.buff_nv12_n; indx++ ) {
+            ret = coda_queue_buf_nv12(&coda_inst, indx);
+            if (ret != 0)
+                goto err;
+        }
+*/
+
+        ret = coda_stream_act(&coda_inst, V4L2_BUF_TYPE_VIDEO_CAPTURE, VIDIOC_STREAMON);
+        if (ret != 0)
+            goto err;
+
+        ret = coda_stream_act(&coda_inst, V4L2_BUF_TYPE_VIDEO_OUTPUT, VIDIOC_STREAMON);
+        if (ret != 0)
+            goto err;
+
     }
 
     // Main loop start here!!!
@@ -129,6 +162,8 @@ int main(int argc, char **argv) {
     wcam_uninit(&wcam_inst);
     wcam_close(&wcam_inst);
 
+    coda_stream_act(&coda_inst, V4L2_BUF_TYPE_VIDEO_CAPTURE, VIDIOC_STREAMOFF);
+    coda_stream_act(&coda_inst, V4L2_BUF_TYPE_VIDEO_OUTPUT, VIDIOC_STREAMOFF);
     coda_close(&coda_inst);
 
     srv_stop(&srv_inst);
@@ -139,6 +174,8 @@ err:
     wcam_uninit(&wcam_inst);
     wcam_close(&wcam_inst);
 
+    coda_stream_act(&coda_inst, V4L2_BUF_TYPE_VIDEO_OUTPUT, VIDIOC_STREAMOFF);
+    coda_stream_act(&coda_inst, V4L2_BUF_TYPE_VIDEO_OUTPUT, VIDIOC_STREAMOFF);
     coda_close(&coda_inst);
 
     srv_stop(&srv_inst);
