@@ -1,0 +1,3 @@
+#Example command line
+
+./v4l2_encode -c h264 -f /home/linaro -m /dev/video33 -w 1280 -h 720 -n 500

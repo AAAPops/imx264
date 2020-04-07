@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="CMakeRunConfigurationManager" shouldGenerate="true" shouldDeleteObsolete="true">
+    <generated>
+      <config projectName="v4l2_encode" targetName="v4l2_encode" />
+    </generated>
+  </component>
+  <component name="CMakeSettings">
+    <configurations>
+      <configuration PROFILE_NAME="Debug" CONFIG_NAME="Debug" />
+    </configurations>
+  </component>
+  <component name="ChangeListManager">
+    <list default="true" id="e0ebf964-3dd4-45bb-8b2d-70415c2e1ac2" name="Default Changelist" comment="">
+      <change beforePath="$PROJECT_DIR$/video.c" beforeDir="false" afterPath="$PROJECT_DIR$/video.c" afterDir="false" />
+    </list>
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="ClangdSettings">
+    <option name="formatViaClangd" value="false" />
+  </component>
+  <component name="ExecutionTargetManager" SELECTED_TARGET="CMakeBuildProfile:Debug" />
+  <component name="Git.Settings">
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+  </component>
+  <component name="OCFindUsagesOptions" text="true" ivars="false" properties="true" derivedClasses="false" />
+  <component name="ProjectConfigurationFiles">
+    <option name="files">
+      <list>
+        <option value="$PROJECT_DIR$/.idea/v4l2-encode.iml" />
+        <option value="$PROJECT_DIR$/.idea/misc.xml" />
+        <option value="$PROJECT_DIR$/.idea/modules.xml" />
+        <option value="$PROJECT_DIR$/.idea/vcs.xml" />
+      </list>
+    </option>
+  </component>
+  <component name="ProjectId" id="1Z7SMcKPba72PCSTBP4BnOBYKF5" />
+  <component name="ProjectViewState">
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showExcludedFiles" value="true" />
+    <option name="showLibraryContents" value="true" />
+  </component>
+  <component name="PropertiesComponent">
+    <property name="ASKED_ADD_EXTERNAL_FILES" value="true" />
+    <property name="SHARE_PROJECT_CONFIGURATION_FILES" value="true" />
+    <property name="WebServerToolWindowFactoryState" value="false" />
+    <property name="node.js.detected.package.eslint" value="true" />
+    <property name="node.js.detected.package.tslint" value="true" />
+    <property name="node.js.path.for.package.eslint" value="project" />
+    <property name="node.js.path.for.package.tslint" value="project" />
+    <property name="node.js.selected.package.eslint" value="(autodetect)" />
+    <property name="node.js.selected.package.tslint" value="(autodetect)" />
+    <property name="nodejs_interpreter_path.stuck_in_default_project" value="undefined stuck path" />
+    <property name="nodejs_npm_path_reset_for_default_project" value="true" />
+    <property name="settings.editor.selected.configurable" value="preferences.lookFeel" />
+  </component>
+  <component name="RunManager">
+    <configuration name="v4l2_encode" type="CMakeRunConfiguration" factoryName="Application" PASS_PARENT_ENVS_2="true" PROJECT_NAME="v4l2_encode" TARGET_NAME="v4l2_encode" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="v4l2_encode" RUN_TARGET_NAME="v4l2_encode">
+      <method v="2">
+        <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
+      </method>
+    </configuration>
+  </component>
+  <component name="SvnConfiguration">
+    <configuration />
+  </component>
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="Default task">
+      <changelist id="e0ebf964-3dd4-45bb-8b2d-70415c2e1ac2" name="Default Changelist" comment="" />
+      <created>1584097673646</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1584097673646</updated>
+      <workItem from="1584097675836" duration="28960000" />
+      <workItem from="1584184334992" duration="2791000" />
+      <workItem from="1584188284411" duration="76000" />
+      <workItem from="1584188549514" duration="17000" />
+      <workItem from="1584188596414" duration="1838000" />
+      <workItem from="1584190628611" duration="19000" />
+      <workItem from="1584436077264" duration="16177000" />
+      <workItem from="1584511008663" duration="17629000" />
+      <workItem from="1584535973896" duration="5152000" />
+    </task>
+    <servers />
+  </component>
+  <component name="TypeScriptGeneratedFilesManager">
+    <option name="version" value="1" />
+  </component>
+  <component name="WindowStateProjectService">
+    <state x="691" y="376" width="531" height="334" key="#com.intellij.ide.actions.ChooseComponentsToExportDialog" timestamp="1584190881096">
+      <screen x="0" y="28" width="1920" height="1027" />
+    </state>
+    <state x="691" y="376" width="531" height="334" key="#com.intellij.ide.actions.ChooseComponentsToExportDialog/0.28.1920.1027/1920.0.1920.1080@0.28.1920.1027" timestamp="1584190881096" />
+    <state x="779" y="277" width="498" height="521" key="FileChooserDialogImpl" timestamp="1584535918317">
+      <screen x="0" y="28" width="1920" height="1027" />
+    </state>
+    <state x="779" y="277" width="498" height="521" key="FileChooserDialogImpl/0.28.1920.1027/1920.0.1920.1080@0.28.1920.1027" timestamp="1584535918317" />
+    <state x="833" y="159" width="1022" height="737" key="SettingsEditor" timestamp="1584437216816">
+      <screen x="0" y="28" width="1920" height="1027" />
+    </state>
+    <state x="833" y="159" width="1022" height="737" key="SettingsEditor/0.28.1920.1027/1920.0.1920.1080@0.28.1920.1027" timestamp="1584437216816" />
+    <state x="744" y="375" width="724" height="309" key="org.intellij.images.editor.actions.BackgroundImageDialog" timestamp="1584189429303">
+      <screen x="0" y="28" width="1920" height="1027" />
+    </state>
+    <state x="744" y="375" width="724" height="309" key="org.intellij.images.editor.actions.BackgroundImageDialog/0.28.1920.1027/1920.0.1920.1080@0.28.1920.1027" timestamp="1584189429303" />
+  </component>
+  <component name="XDebuggerManager">
+    <breakpoint-manager>
+      <breakpoints>
+        <line-breakpoint enabled="true" type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
+          <url>file://$PROJECT_DIR$/_video.c</url>
+          <line>506</line>
+          <option name="timeStamp" value="10" />
+        </line-breakpoint>
+      </breakpoints>
+    </breakpoint-manager>
+  </component>
+</project>
