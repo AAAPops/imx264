@@ -12,7 +12,6 @@
 
 #include <linux/videodev2.h>
 
-#include "common.h"
 #include "webcam.h"
 
 static int xioctl(int fh, int request, void *arg)
@@ -504,7 +503,7 @@ void wcam_stop_capturing(struct Webcam_inst* i)
 
     type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     if( xioctl(i->wcam_fd, VIDIOC_STREAMOFF, &type) == -1 ) {
-        err("'%s': ioctl(VIDIOC_STREAMOFF", i->wcam_name);
+        err("'%s': ioctl(VIDIOC_STREAMOFF)", i->wcam_name);
     }
 
     info("Webcam stop capturing");

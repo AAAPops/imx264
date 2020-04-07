@@ -72,31 +72,11 @@
 
 
 
-
-/*
-struct _iofile {
-	char    name[255];
-    FILE    *ptr;
-    int     fd;
+struct Buffer {
+    void   *start;
+    size_t  length;
+    size_t  bytesused;
 };
-
-struct _instance {
-
-    struct _iofile  in_file;
-    struct _iofile  out_file;
-
-    char        *in_buff_ptr;
-    char        *out_buff_ptr;
-    size_t      in_buff_sz;
-    size_t      out_buff_sz;
-
-    uint16_t    width;
-    uint16_t    height;
-
-    uint16_t    n_frames_to_convert;
-    char        *n_frames_to_conv_str;
-};
-*/
 
 #endif /* INCLUDE_COMMON_H */
 

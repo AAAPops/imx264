@@ -5,19 +5,14 @@
 #include <stdio.h>
 #include <stdint.h>
 
+#include "common.h"
+
 #define REQ_BUFF  2
 
-enum io_method {
-    IO_METHOD_READ,
-    IO_METHOD_MMAP,
-    IO_METHOD_USERPTR,
-};
-
-struct Buffer {
-    void   *start;
-    size_t  length;
-    size_t  bytesused;
-};
+#define MACROPIX       8
+#define MPIX444_SZ    24
+#define MPIX422_SZ    16
+#define MPIX420_SZ    12
 
 
 struct Webcam_inst {
@@ -35,12 +30,6 @@ struct Webcam_inst {
     int              frame_count;
 };
 
-
-
-#define MACROPIX       8
-#define MPIX444_SZ    24
-#define MPIX422_SZ    16
-#define MPIX420_SZ    12
 
 int wcam_open(struct Webcam_inst* wcam_i);
 int wcam_init(struct Webcam_inst* wcam_i);

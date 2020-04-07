@@ -33,7 +33,7 @@ static void set_defaults(struct Webcam_inst *wcam_i,
     strcpy(srv_i->ip, "10.1.91.15");
     srv_i->port = 5100;
 
-    strcpy(coda_i->coda_name, "coda_encoder");
+    strcpy(coda_i->coda_name, "/dev/video0");
 }
 
 

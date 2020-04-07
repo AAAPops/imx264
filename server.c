@@ -89,6 +89,13 @@ int srv_send_data(struct Srv_inst* i, void* buff_ptr, size_t buff_len) {
 int srv_get_data(struct Srv_inst* i) {
 
     int n_bytes = recv(i->peer_fd, i->read_buff, sizeof(i->read_buff), 0);
+    if( n_bytes == -1 ) {
+        err("Some error with client [%m]");
+        return -1;
+    } else if( n_bytes == 0 ) {
+        info("Client closed connection");
+        return 0;
+    }
 
     return n_bytes;
 }

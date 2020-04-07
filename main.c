@@ -53,13 +53,8 @@ int mainloop(struct Webcam_inst* wcam_i,
         // Read data from client
         if( FD_ISSET(srv_i->peer_fd, &read_fds) ) {
             int data_len = srv_get_data(srv_i);
-            if( data_len == -1 ) {
-                err("Some error with client [%m]");
-                return -1;
-            } else if( data_len == 0 ) {
-                info("Client closed connection");
+            if( data_len < 1 )
                 return 0;
-            }
         }
 
         // Read data from webcam
@@ -91,22 +86,37 @@ int main(int argc, char **argv) {
     ret = pars_args(argc, argv, &wcam_inst, &srv_inst, &coda_inst);
     if( ret != 0 )
         goto err;
-
+/*
     ret = srv_tcp_start(&srv_inst);
     if( ret != 0 )
         goto err;
+*/
+    {
+        ret = wcam_open(&wcam_inst);
+        if (ret != 0)
+            goto err;
 
-    ret = wcam_open(&wcam_inst);
-    if( ret != 0 )
-        goto err;
+        ret = wcam_init(&wcam_inst);
+        if (ret != 0)
+            goto err;
 
-    ret = wcam_init(&wcam_inst);
-    if( ret != 0 )
-        goto err;
+        ret = wcam_start_capturing(&wcam_inst);
+        if (ret != 0)
+            goto err;
+    }
 
-    ret = wcam_start_capturing(&wcam_inst);
-    if( ret != 0 )
-        goto err;
+    {
+        coda_inst.width = wcam_inst.width;
+        coda_inst.height = wcam_inst.height;
+
+        ret = coda_open(&coda_inst);
+        if (ret != 0)
+            goto err;
+
+        ret = coda_init_nv12(&coda_inst);
+        if (ret != 0)
+            goto err;
+    }
 
     // Main loop start here!!!
     ret = mainloop(&wcam_inst, &srv_inst, &coda_inst);
@@ -118,15 +128,19 @@ int main(int argc, char **argv) {
     wcam_stop_capturing(&wcam_inst);
     wcam_uninit(&wcam_inst);
     wcam_close(&wcam_inst);
-    srv_stop(&srv_inst);
 
+    coda_close(&coda_inst);
+
+    srv_stop(&srv_inst);
     return 0;
 err:
     printf("\n");
     wcam_stop_capturing(&wcam_inst);
     wcam_uninit(&wcam_inst);
     wcam_close(&wcam_inst);
-    srv_stop(&srv_inst);
 
+    coda_close(&coda_inst);
+
+    srv_stop(&srv_inst);
     return -1;
 }
