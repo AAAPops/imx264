@@ -57,7 +57,7 @@ void usage(char **argv,
     fprintf(stderr, "\t-w | --width         Frame width resolution [320..1920] \n");
     fprintf(stderr, "\t-h | --height        Frame height resolution [240..1080]\n");
     fprintf(stderr, "\t-f | --frate         Framerate [5..30] \n");
-    fprintf(stderr, "\t-c | --count         Number of frames to grab \n");
+    fprintf(stderr, "\t-c | --count         Number of frames to grab [0 - run forever] \n");
 }
 
 
@@ -131,7 +131,7 @@ int pars_args(int argc, char **argv, struct Webcam_inst* wcam_i,
 
             case 'c':
                 wcam_i->frame_count = strtol(optarg, NULL, 10);
-                if( wcam_i->frame_count < 1 || wcam_i->frame_count > 10000 ) {
+                if( wcam_i->frame_count < 0 || wcam_i->frame_count > 100000 ) {
                     err("A problem with parameter '--count'");
                     return -1;
                 }

@@ -70,12 +70,8 @@ int yuyv_to_nv12_neon(char *in_buff_ptr, size_t in_buff_sz,
 
     int yuyv_line_len = (width / 2) * 4;
     uint8x16x2_t chunk_128x2;
-/*
-    struct timeval  tv;
-    gettimeofday(&tv, NULL);
-    double time_begin = ((double)tv.tv_sec) * 1000 +
-                        ((double)tv.tv_usec) / 1000;
-*/
+
+
     for( line_n = 0; line_n < height; line_n++ ) {
         for( chunk_n = 0; chunk_n < yuyv_line_len / 32 ; chunk_n++)
         {
@@ -117,11 +113,6 @@ int yuyv_to_nv12_neon(char *in_buff_ptr, size_t in_buff_sz,
 
     }
 /*
-    gettimeofday(&tv, NULL);
-    double time_end = ((double)tv.tv_sec) * 1000 +
-                      ((double)tv.tv_usec) / 1000 ;
-    dbg("Execute time 'yuyv_to_nv12()' = %f(ms)", time_end - time_begin);
-
     dbg("Total lines in picture = %d", line_n);
     dbg("Y' plane start pos: 0, end pos: %d [0x%x]", Y_offset - 1, Y_offset - 1);
     dbg("CbCr plane start pos: %d, end pos: %d [0x%x]",

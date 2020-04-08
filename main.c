@@ -11,6 +11,33 @@
 #include "coda960.h"
 
 
+double stopwatch(char* label, double timebegin) {
+    struct timeval tv;
+
+    if( timebegin == 0 ) {
+        if (label)
+            fprintf(stderr, "%s: Start stopwatch... \n", label);
+        else
+            fprintf(stderr, "Start stopwatch... \n");
+
+
+        gettimeofday(&tv, NULL);
+        double time_begin = ((double) tv.tv_sec) * 1000 +
+                            ((double) tv.tv_usec) / 1000;
+        return time_begin;
+    } else {
+        gettimeofday(&tv, NULL);
+        double time_end = ((double)tv.tv_sec) * 1000 +
+                          ((double)tv.tv_usec) / 1000 ;
+
+        fprintf(stderr, "%s: Execute time = %f(ms) \n",
+                label, time_end - timebegin);
+
+        return 0;
+    }
+}
+
+
 
 int mainloop(struct Webcam_inst* wcam_i,
         struct Srv_inst* srv_i, struct Coda_inst* coda_i)
@@ -21,13 +48,16 @@ int mainloop(struct Webcam_inst* wcam_i,
     int ret;
     int fds_max = 0;
     int total_frames = 0;
+    int frame_count;
 
     unsigned int yuy2_buf_indx;
 
+    frame_count = (wcam_i->frame_count == 0) ?  10 : wcam_i->frame_count;
 
-    for( iter = 0; iter < wcam_i->frame_count; iter++) {
+    while( frame_count-- ) {
         if( wcam_i->frame_count == 0 )
-            iter--;
+            frame_count = 10;
+
 
         fd_set read_fds;
         FD_ZERO(&read_fds);
@@ -61,30 +91,70 @@ int mainloop(struct Webcam_inst* wcam_i,
                 return 0;
         }
 
+        //
         // Read data from webcam
+        //
         if( FD_ISSET(wcam_i->wcam_fd, &read_fds) ) {
-            //ret = wcam_process_new_frame(wcam_i);
+            //double time_start = stopwatch(NULL, 0);
+
+            // 1. Извлекаю YUY2 буфер из Web-камеры
             ret = wcam_dequeue_buf(wcam_i, &yuy2_buf_indx);
             if (ret == -1)
                 return -1;
 
+            // 2. Конвертирую буфер Web-камеры в NV12 буфер Coda
             ret = yuyv_to_nv12_neon(wcam_i->buffers[yuy2_buf_indx].start,
                                     wcam_i->buffers[yuy2_buf_indx].length,
-                                    wcam_i->nv12_buff.start, wcam_i->nv12_buff.length,
+                                    coda_i->buff_nv12[0].start,
+                                    coda_i->buff_nv12[0].length,
                                     wcam_i->width, wcam_i->height);
             if( ret == -1 )
                 return -1;
 
+            // 3. Ставлю входной буфер NV12 Coda в очередь на обработку
+            ret = coda_queue_buf_nv12(coda_i, 0);
+            if (ret == -1)
+                return -1;
+
+            // 4. Возвращаю буфер Web-камеры в очередь
             ret = wcam_queue_buf(wcam_i, yuy2_buf_indx);
             if (ret == -1)
                 return -1;
 
-            ret = srv_send_data(srv_i, wcam_i->nv12_buff.start, wcam_i->nv12_buff.length);
+            // 5. Извлекаю h264 буфер из Coda
+            unsigned int h264_buf_indx;
+            unsigned int h264_finished;
+            unsigned int h264_bytesused;
+            unsigned int h264_buf_flags;
+
+            ret = coda_dequeue_h264(coda_i, &h264_buf_indx,
+                    &h264_finished, &h264_bytesused,
+                    &h264_buf_flags);
+            if (ret == -1)
+                return -1;
+
+            // 5.1 Пересылаю h264 данные клиенту
+            ret = srv_send_data(srv_i,
+                    coda_i->buff_264[h264_buf_indx].start, h264_bytesused);
+            if (ret == -1)
+                return -1;
+
+
+            // 6. Извлекаю NV12 буфер из очереди Coda
+            unsigned int nv12_buf_indx;
+            ret = coda_dequeue_nv12(coda_i, &nv12_buf_indx);
+            if( ret == -1 )
+                return -1;
+
+            // 7. Возвращаю использованный h264 буфер обратно в очередь Coda
+            ret = coda_queue_buf_h264(coda_i, h264_buf_indx);
             if (ret == -1)
                 return -1;
         }
 
-        fprintf(stdout, "%03d\b\b\b", ++total_frames);
+        fprintf(stdout, "%05d\b\b\b\b\b", ++total_frames);
+        if( total_frames > 99999 )
+            total_frames = 0;
         fflush(stdout);
     }
 
