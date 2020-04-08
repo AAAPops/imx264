@@ -25,7 +25,7 @@ static int xioctl(int fh, int request, void *arg)
     return r;
 }
 
-static int yuyv_to_nv12_neon(char *in_buff_ptr, size_t in_buff_sz,
+int yuyv_to_nv12_neon(char *in_buff_ptr, size_t in_buff_sz,
                       char *out_buff_ptr, size_t out_buff_sz,
                       uint16_t width, uint16_t height)
 {
@@ -194,6 +194,57 @@ int wcam_process_new_frame(struct Webcam_inst* i)
     }
 
     return 0;
+}
+
+int wcam_dequeue_buf(struct Webcam_inst *i, unsigned int *index){
+    int ret;
+
+    struct v4l2_buffer buf;
+    MEMZERO(buf);
+
+    buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    buf.memory = V4L2_MEMORY_MMAP;
+
+    if( xioctl(i->wcam_fd, VIDIOC_DQBUF, &buf) == -1 ) {
+        switch (errno) {
+            case EAGAIN:
+                return 0;
+
+            case EIO:
+                /* Could ignore EIO, see spec. */
+                /* fall through */
+
+            default: {
+                err("ioctl(VIDIOC_DQBUF) [%m]");
+                return -1;
+            }
+        }
+    }
+
+    assert(buf.index < i->buffers_n);
+    *index = buf.index;
+
+    return 0;
+}
+
+int wcam_queue_buf(struct Webcam_inst *i, unsigned int index){
+    int ret;
+
+    struct v4l2_buffer buf;
+    MEMZERO(buf);
+
+    buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    buf.memory = V4L2_MEMORY_MMAP;
+    buf.index = index;
+
+    ret = xioctl(i->wcam_fd, VIDIOC_QBUF, &buf);
+    if( ret == -1 ){
+        err("ioctl(VIDIOC_QBUF) [%m]");
+        return -1;
+    }
+
+    return 0;
+
 }
 
 /*

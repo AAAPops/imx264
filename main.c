@@ -20,6 +20,9 @@ int mainloop(struct Webcam_inst* wcam_i,
     int iter;
     int ret;
     int fds_max = 0;
+    int total_frames = 0;
+
+    unsigned int yuy2_buf_indx;
 
 
     for( iter = 0; iter < wcam_i->frame_count; iter++) {
@@ -60,7 +63,19 @@ int mainloop(struct Webcam_inst* wcam_i,
 
         // Read data from webcam
         if( FD_ISSET(wcam_i->wcam_fd, &read_fds) ) {
-            ret = wcam_process_new_frame(wcam_i);
+            //ret = wcam_process_new_frame(wcam_i);
+            ret = wcam_dequeue_buf(wcam_i, &yuy2_buf_indx);
+            if (ret == -1)
+                return -1;
+
+            ret = yuyv_to_nv12_neon(wcam_i->buffers[yuy2_buf_indx].start,
+                                    wcam_i->buffers[yuy2_buf_indx].length,
+                                    wcam_i->nv12_buff.start, wcam_i->nv12_buff.length,
+                                    wcam_i->width, wcam_i->height);
+            if( ret == -1 )
+                return -1;
+
+            ret = wcam_queue_buf(wcam_i, yuy2_buf_indx);
             if (ret == -1)
                 return -1;
 
@@ -68,6 +83,9 @@ int mainloop(struct Webcam_inst* wcam_i,
             if (ret == -1)
                 return -1;
         }
+
+        fprintf(stdout, "%03d\b\b\b", ++total_frames);
+        fflush(stdout);
     }
 
     return 0;
@@ -87,11 +105,11 @@ int main(int argc, char **argv) {
     ret = pars_args(argc, argv, &wcam_inst, &srv_inst, &coda_inst);
     if( ret != 0 )
         goto err;
-/*
+
     ret = srv_tcp_start(&srv_inst);
     if( ret != 0 )
         goto err;
-*/
+
     {
         ret = wcam_open(&wcam_inst);
         if (ret != 0)

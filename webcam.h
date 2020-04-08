@@ -39,7 +39,14 @@ int wcam_process_new_frame(struct Webcam_inst* i);
 int wcam_start_capturing(struct Webcam_inst* i);
 void wcam_stop_capturing(struct Webcam_inst* i);
 
+int wcam_queue_buf(struct Webcam_inst *i, unsigned int index);
+int wcam_dequeue_buf(struct Webcam_inst *i, unsigned int *index);
+
 void wcam_uninit(struct Webcam_inst* i);
 void wcam_close(struct Webcam_inst* i);
+
+int yuyv_to_nv12_neon(char *in_buff_ptr, size_t in_buff_sz,
+                      char *out_buff_ptr, size_t out_buff_sz,
+                      uint16_t width, uint16_t height);
 
 #endif /* INCLUDE_WEBCAM_H */
