@@ -321,19 +321,19 @@ int coda_set_control(struct Coda_inst *i)
         return -1;
     }
 
-    MEMZERO(cntrl);
-    cntrl.id = V4L2_CID_MPEG_VIDEO_BITRATE;
-    if (i->bitrate <= 160000000 && i->bitrate >= 32000)
+    // Set bitrate manually (not recommended)
+    if (i->bitrate <= 160000000 && i->bitrate >= 32000) {
+        MEMZERO(cntrl);
+        cntrl.id = V4L2_CID_MPEG_VIDEO_BITRATE;
         cntrl.value = i->bitrate;
-    else
-        cntrl.value = 10 * 1024 * 1024;
 
-    info("Set_ctrl: setting bitrate: %d", cntrl.value);
+        info("Set_ctrl: setting bitrate: %d", cntrl.value);
 
-    ret = ioctl(i->coda_fd, VIDIOC_S_CTRL, &cntrl);
-    if( ret == -1 ) {
-        err("Set_ctrl: set bitrate [%m]");
-        return -1;
+        ret = ioctl(i->coda_fd, VIDIOC_S_CTRL, &cntrl);
+        if (ret == -1) {
+            err("Set_ctrl: set bitrate [%m]");
+            return -1;
+        }
     }
 
 

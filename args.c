@@ -34,7 +34,7 @@ static void set_defaults(struct Webcam_inst *wcam_i,
     srv_i->port = 5100;
 
     strcpy(coda_i->coda_name, "/dev/video0");
-    coda_i->bitrate = 5000000;
+    coda_i->bitrate = 0;
     //coda_i->num_bframes = 10;
 }
 
