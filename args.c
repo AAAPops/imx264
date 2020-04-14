@@ -1,18 +1,19 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <netinet/in.h>
 
 #include "common.h"
 #include "args.h"
 
-const char short_options[] = "d:?iS:F:w:h:f:c:";
+const char short_options[] = "d:?iP:F:w:h:f:c:";
 
 const struct option
         long_options[] = {
         { "device", required_argument, NULL, 'd' },
         { "help",   no_argument,       NULL, '?' },
         { "info",   no_argument,       NULL, 'i' },
-        { "server", required_argument, NULL, 'S' },
+        { "port",   required_argument, NULL, 'P' },
         { "file",   required_argument, NULL, 'F' },
         { "width",  required_argument, NULL, 'w' },
         { "height", required_argument, NULL, 'h' },
@@ -30,7 +31,7 @@ static void set_defaults(struct Webcam_inst *wcam_i,
     wcam_i->frame_rate = 10;
     wcam_i->frame_count = 100;
 
-    strcpy(srv_i->ip, "10.1.91.15");
+    strcpy(srv_i->string, "loopback");
     srv_i->port = 5100;
 
     strcpy(coda_i->coda_name, "/dev/video0");
@@ -42,17 +43,17 @@ static void set_defaults(struct Webcam_inst *wcam_i,
 void usage(char **argv,
            struct Webcam_inst* wcam_i, struct Srv_inst* srv_i) {
     fprintf(stderr, "Version %s \n", VERSION);
-    fprintf(stderr, "Usage: %s -d %s  -w %d -h %d -f %d -c %d -S %s:%d [-F] \n\n",
+    fprintf(stderr, "Usage: %s -d %s  -w %d -h %d -f %d -c %d -P %s:%d [-F] \n\n",
             argv[0],
             wcam_i->wcam_name, wcam_i->width, wcam_i->height,
             wcam_i->frame_rate, wcam_i->frame_count,
-            srv_i->ip, srv_i->port);
+            srv_i->string, srv_i->port);
 
     fprintf(stderr,"Options: \n");
     fprintf(stderr, "\t-d | --device name   Webcam device name \n");
     fprintf(stderr, "\t   | --help          Print this message \n");
     fprintf(stderr, "\t-i | --info          Get webcam info \n");
-    fprintf(stderr, "\t-S | --server        Send UDP stream to host \n");
+    fprintf(stderr, "\t-P | --port          Listen on [127.0.0.1]:port [1024..65535]\n");
     fprintf(stderr, "\t-F | --file          Output stream to file \n");
     fprintf(stderr, "\t-w | --width         Frame width resolution [320..1920] \n");
     fprintf(stderr, "\t-h | --height        Frame height resolution [240..1080]\n");
@@ -95,10 +96,28 @@ int pars_args(int argc, char **argv, struct Webcam_inst* wcam_i,
                 wcam_i->get_info = 1;
                 break;
 
-            case 'S':
-                err("'--server' option: you can not manually change the settings");
-                return -1;
+            case 'P': {
+                const char ch = ':';
+                char *colon_ptr;
+
+                colon_ptr = memchr(optarg, ch, strlen(optarg));
+                if( colon_ptr ) {
+                    srv_i->addr = INADDR_LOOPBACK;
+                    strcpy(srv_i->string, "loopback");
+                    srv_i->port = strtol(colon_ptr + 1, NULL, 10);
+                } else {
+                    srv_i->addr = INADDR_ANY;
+                    strcpy(srv_i->string, "all");
+                    srv_i->port = strtol(optarg, NULL, 10);
+                }
+
+                if( srv_i->port < 1024 || srv_i->port > 65535 ) {
+                    err("A problem with parameter '--port'");
+                    return -1;
+                }
+
                 break;
+            }
 
             case 'w':
                 wcam_i->width = strtol(optarg, NULL, 10);
@@ -143,11 +162,11 @@ int pars_args(int argc, char **argv, struct Webcam_inst* wcam_i,
         }
     }
 
-    dbg("Will use: %s -d %s  -w %d -h %d -f %d -c %d -S %s:%d \n",
+    dbg("Will use: %s -d %s  -w %d -h %d -f %d -c %d -P %s:%d \n",
             argv[0],
             wcam_i->wcam_name, wcam_i->width, wcam_i->height,
             wcam_i->frame_rate, wcam_i->frame_count,
-            srv_i->ip, srv_i->port);
+            srv_i->string, srv_i->port);
 
     return  0;
 }

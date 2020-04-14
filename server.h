@@ -6,12 +6,13 @@
 #include <getopt.h>
 
 struct Srv_inst {
-    char    ip[128];
-    int     port;
-    int     srv_fd;
-    int     peer_fd;
+    char       string[128];
+    uint32_t   addr;
+    int        port;
+    int        srv_fd;
+    int        peer_fd;
 
-    uint8_t read_buff[128];
+    uint8_t    read_buff[128];
 };
 
 
