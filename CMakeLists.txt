@@ -8,13 +8,13 @@ set(HEADER common.h        args.h webcam.h server.h coda960.h)
 
 set(CMAKE_C_FLAGS "-mtune=cortex-a9 -mfpu=neon")
 
-set(THREADS_PREFER_PTHREAD_FLAG ON)
-find_package(Threads REQUIRED)
+#set(THREADS_PREFER_PTHREAD_FLAG ON)
+#find_package(Threads REQUIRED)
 
 add_executable(webcam_x264 ${SOURCE})
-target_link_libraries(webcam_x264  Threads::Threads)
+#target_link_libraries(webcam_x264  Threads::Threads)
 
 
-add_subdirectory(v4l2-encode)
+add_subdirectory(proto)
 
 
