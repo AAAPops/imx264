@@ -23,4 +23,6 @@ int srv_get_data(struct Srv_inst* i);
 
 void srv_stop(struct Srv_inst* i);
 
+int srv_get_data_1(struct Srv_inst* i, void *buffer, size_t count);
+
 #endif

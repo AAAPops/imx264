@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#include <poll.h>
 
 #include <netinet/in.h>
 #include <sys/socket.h>
@@ -99,3 +100,58 @@ int srv_get_data(struct Srv_inst* i) {
 
     return n_bytes;
 }
+
+int srv_get_data_1(struct Srv_inst* i, void *buffer, size_t count) {
+
+    struct pollfd pfds;
+    int ret;
+    size_t n_bytes;
+    size_t offset = 0;
+
+    pfds.fd = i->peer_fd;
+    pfds.events = POLLIN;
+
+    while (1) {
+        ret = poll(&pfds, 1, 1000 * TIMEOUT_SEC);
+        if( ret == -1 ) {
+            err("poll: [%m]");
+            return -1;
+
+        } else if( ret == 0 ) {
+            err("poll: Time out");
+            return -1;
+        }
+/*
+        printf("  fd=%d; events: %s%s%s%s\n", pfds.fd,
+               (pfds.revents & POLLIN)  ? "POLLIN "  : "",
+               (pfds.revents & POLLHUP) ? "POLLHUP " : "",
+               (pfds.revents & POLLHUP) ? "POLLRDHUP " : "",
+               (pfds.revents & POLLERR) ? "POLLERR " : "");
+*/
+        if (pfds.revents & POLLIN) {
+            n_bytes = recv(i->peer_fd, buffer + offset, count, 0);
+            if( n_bytes == -1 ) {
+                err("recv: [%m]");
+                return -1;
+            }
+            if( n_bytes == 0 ) {
+                info("peer closed connection");
+                return -1;
+            }
+        } else {  // POLLERR | POLLHUP
+            info("peer closed connection");
+            return -1;
+        }
+
+        if( n_bytes == count )
+            break;
+
+        offset += n_bytes;
+        count -= n_bytes;
+    }
+
+
+
+    return 0;
+}
+

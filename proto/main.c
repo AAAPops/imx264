@@ -1,6 +1,5 @@
 #include <stdio.h>
 #include <string.h>
-#include <errno.h>
 #include <linux/videodev2.h>
 #include <sys/select.h>
 
@@ -9,6 +8,7 @@
 //#include "webcam.h"
 //#include "server.h"
 //#include "coda960.h"
+#include "proto.h"
 
 
 double stopwatch(char* label, double timebegin) {
@@ -162,6 +162,50 @@ int mainloop(struct Webcam_inst* wcam_i,
 }
 */
 
+int main_server_loop(struct Srv_inst* srv_i, struct Proto_inst* proto_i) {
+    struct timeval tv;
+
+    int iter;
+    int ret;
+    int fds_max = 0;
+
+    while(1) {
+        fd_set read_fds;
+        FD_ZERO(&read_fds);
+
+        FD_SET(srv_i->peer_fd, &read_fds);
+        if (fds_max < srv_i->peer_fd)
+            fds_max = srv_i->peer_fd;
+
+        // Timeout
+        tv.tv_sec = TIMEOUT_SEC;
+        tv.tv_usec = 0;
+
+        ret = select(fds_max + 1, &read_fds, NULL, NULL, &tv);
+        if (ret == -1) {
+            err("select(): [%m]");
+            return -1;
+        } else if (ret == 0) {
+            err("select(): timeout to get query from peer");
+            return -1;
+        }
+
+        // Read message from client
+        if( FD_ISSET(srv_i->peer_fd, &read_fds) ) {
+            ret = get_peer_msg(srv_i, proto_i);
+            if (ret)
+                return -1;
+
+
+
+        }
+
+
+    }
+
+    return 0;
+}
+
 
 int main(int argc, char **argv) {
     struct Webcam_inst wcam_inst;
@@ -170,6 +214,8 @@ int main(int argc, char **argv) {
     MEMZERO(srv_inst);
     struct Coda_inst coda_inst;
     MEMZERO(coda_inst);
+    struct Proto_inst proto_inst;
+    MEMZERO(proto_inst);
 
     int ret;
 
@@ -180,7 +226,15 @@ int main(int argc, char **argv) {
     ret = srv_tcp_start(&srv_inst);
     if( ret != 0 )
         goto err;
+
+    ret = proto_handshake(&srv_inst, &proto_inst, &wcam_inst);
+    if (ret)
+        goto err;
 /*
+    ret = main_server_loop(&srv_inst, &proto_inst);
+    if (ret)
+        goto err;
+
     {
         ret = wcam_open(&wcam_inst);
         if (ret != 0)

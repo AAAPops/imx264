@@ -29,7 +29,8 @@
 #include <stdio.h>
 #include <stdint.h>
 
-#define VERSION     "0.1.a"
+#define VERSION      "0.1.a"
+#define TIMEOUT_SEC  5
 
 
 /* When ADD_DETAILS is defined every debug and error message contains
