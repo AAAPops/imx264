@@ -3,8 +3,8 @@ project(webcam_264)
 
 set(CMAKE_C_STANDARD 99)
 
-set(SOURCE          main.c args.c webcam.c server.c coda960.c)
-set(HEADER common.h        args.h webcam.h server.h coda960.h)
+set(SOURCE          main.c args.c webcam.c server.c coda960.c proto.c)
+set(HEADER common.h        args.h webcam.h server.h coda960.h proto.h)
 
 set(CMAKE_C_FLAGS "-mtune=cortex-a9 -mfpu=neon")
 

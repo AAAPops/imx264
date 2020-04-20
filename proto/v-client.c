@@ -13,7 +13,7 @@
 #include "../common.h"
 #include "../webcam.h"
 #include "../server.h"
-#include "proto.h"
+#include "../proto.h"
 
 #define SA struct sockaddr
 #define IP_ADDR "10.1.91.123"

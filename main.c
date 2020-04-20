@@ -9,6 +9,7 @@
 #include "webcam.h"
 #include "server.h"
 #include "coda960.h"
+#include "proto.h"
 
 
 double stopwatch(char* label, double timebegin) {
@@ -40,7 +41,9 @@ double stopwatch(char* label, double timebegin) {
 
 
 int mainloop(struct Webcam_inst* wcam_i,
-        struct Srv_inst* srv_i, struct Coda_inst* coda_i)
+             struct Srv_inst* srv_i,
+             struct Coda_inst* coda_i,
+             struct Proto_inst* proto_i)
 {
     struct timeval tv;
 
@@ -134,9 +137,15 @@ int mainloop(struct Webcam_inst* wcam_i,
                 return -1;
 
             // 5.1 Пересылаю h264 данные клиенту
-            ret = srv_send_data(srv_i,
-                    coda_i->buff_264[h264_buf_indx].start, h264_bytesused);
-            if (ret == -1)
+            // Send h264 DATA
+            memset(proto_i, 0, sizeof(struct Proto_inst));
+            proto_i->cmd = PROTO_CMD_DATA;
+            proto_i->status = PROTO_STS_OK;
+
+            proto_i->data = coda_i->buff_264[h264_buf_indx].start;
+            proto_i->data_len = h264_bytesused;
+            ret = send_peer_msg(srv_i, proto_i);
+            if (ret)
                 return -1;
 
 
@@ -169,6 +178,8 @@ int main(int argc, char **argv) {
     MEMZERO(srv_inst);
     struct Coda_inst coda_inst;
     MEMZERO(coda_inst);
+    struct Proto_inst proto_inst;
+    MEMZERO(proto_inst);
 
     int ret;
 
@@ -178,6 +189,10 @@ int main(int argc, char **argv) {
 
     ret = srv_tcp_start(&srv_inst);
     if( ret != 0 )
+        goto err;
+
+    ret = proto_handshake(&srv_inst, &proto_inst, &wcam_inst);
+    if (ret)
         goto err;
 
     {
@@ -240,7 +255,7 @@ int main(int argc, char **argv) {
     }
 
     // Main loop start here!!!
-    ret = mainloop(&wcam_inst, &srv_inst, &coda_inst);
+    ret = mainloop(&wcam_inst, &srv_inst, &coda_inst, &proto_inst);
     if( ret != 0 )
         goto err;
 

@@ -13,15 +13,15 @@ add_executable(v-srv main.c
         ../server.h
         ../args.c
         ../args.h
-        proto.c
-        proto.h)
+        ../proto.c
+        ../proto.h)
 
 
 add_executable(v-client v-client.c
         ../server.c
         ../server.h
-        proto.c
-        proto.h)
+        ../proto.c
+        ../proto.h)
 
 
 

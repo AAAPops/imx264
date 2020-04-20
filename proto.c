@@ -4,9 +4,9 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 
-#include "../common.h"
-#include "../server.h"
-#include "../webcam.h"
+#include "common.h"
+#include "server.h"
+#include "webcam.h"
 #include "proto.h"
 
 
@@ -247,18 +247,6 @@ int proto_handshake(struct Srv_inst* si, struct Proto_inst* pi,
 
     pi->data = bin_data;
     pi->data_len = strlen(bin_data);
-    ret = send_peer_msg(si, pi);
-    if (ret)
-        return -1;
-
-    sleep(5);
-    char bin_data_2[] = "Попытка #2!!! h264 frame here!!!";
-    memset(pi, 0, sizeof(struct Proto_inst));
-    pi->cmd = PROTO_CMD_DATA;
-    pi->status = PROTO_STS_OK;
-
-    pi->data = bin_data_2;
-    pi->data_len = strlen(bin_data_2);
     ret = send_peer_msg(si, pi);
     if (ret)
         return -1;

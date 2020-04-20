@@ -8,7 +8,7 @@
 //#include "webcam.h"
 //#include "server.h"
 //#include "coda960.h"
-#include "proto.h"
+#include "../proto.h"
 
 
 double stopwatch(char* label, double timebegin) {
