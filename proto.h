@@ -40,12 +40,12 @@ struct Proto_inst {
 
 int get_peer_msg(struct Srv_inst* i, struct Proto_inst* p);
 int send_peer_msg(struct Srv_inst* i, struct Proto_inst* p);
-int get_h264_data(struct Srv_inst* i, struct Proto_inst* p);
+//int get_h264_data(struct Srv_inst* i, struct Proto_inst* p);
 
 int proto_handshake(struct Srv_inst* s, struct Proto_inst* p,
                     struct Webcam_inst* w);
 
-void print_peer_msg(struct Proto_inst* p);
+void print_peer_msg(char *label, struct Proto_inst* p);
 
 
 #endif

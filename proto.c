@@ -10,29 +10,40 @@
 #include "proto.h"
 
 
-int get_peer_msg(struct Srv_inst* i, struct Proto_inst* p) {
+int get_peer_msg(struct Srv_inst* i, struct Proto_inst* p)
+{
     int ret;
 
-    memset(p, 0, sizeof(struct Proto_inst));
     ret = srv_get_data_1(i, p->hdr, PROTO_HEADER_SZ);
     if (ret)
         return -1;
 
     p->cmd = *(char*)(p->hdr + 0);
     p->status = *(char*)(p->hdr + 1);
-    p->msg_len= ntohl(*(uint32_t*)(p->hdr + 2));
 
-    if( p->msg_len > 0 ) {
-        ret = srv_get_data_1(i, p->msg, p->msg_len);
-        if (ret)
-            return -1;
+    if( p->cmd == PROTO_CMD_DATA ) {
+        p->data_len= ntohl(*(uint32_t*)(p->hdr + 2));
+
+        if( p->data_len > 0 ) {
+            ret = srv_get_data_1(i, p->data, p->data_len);
+            if (ret)
+                return -1;
+        }
+    } else {
+        p->msg_len = ntohl(*(uint32_t *) (p->hdr + 2));
+
+        if (p->msg_len > 0) {
+            ret = srv_get_data_1(i, p->msg, p->msg_len);
+            if (ret)
+                return -1;
+        }
     }
 
     return 0;
 }
 
-
-int get_h264_data(struct Srv_inst* i, struct Proto_inst* p) {
+/*
+static int get_h264_data(struct Srv_inst* i, struct Proto_inst* p) {
     int ret;
 
     ret = srv_get_data_1(i, p->hdr, PROTO_HEADER_SZ);
@@ -57,7 +68,7 @@ int get_h264_data(struct Srv_inst* i, struct Proto_inst* p) {
 
     return 0;
 }
-
+*/
 
 int send_peer_msg(struct Srv_inst* i, struct Proto_inst* p) {
     int ret;
@@ -97,7 +108,7 @@ int send_peer_msg(struct Srv_inst* i, struct Proto_inst* p) {
 }
 
 
-void print_peer_msg(struct Proto_inst* p){
+void print_peer_msg(char *label, struct Proto_inst* p){
     char cmd[32];
     char status[32];
 
@@ -133,12 +144,14 @@ void print_peer_msg(struct Proto_inst* p){
 
 
     if( p->cmd == PROTO_CMD_DATA ) {
-        info("MSG<--- Cmd = %s, Status = %s, DataLen = %d, msg = 'binary data'",
-                cmd, status, p->data_len);
+        info("%s Cmd = %s, Status = %s, DataLen = %d, data = 'binary data'",
+                label, cmd, status, p->data_len);
     } else
-        info("MSG<--- Cmd = %s, Status = %s, MsgLen = %d, msg = '%s'",
-             cmd, status, p->msg_len, p->msg);
+        info("%s Cmd = %s, Status = %s, MsgLen = %d, msg = '%s'",
+             label, cmd, status, p->msg_len, p->msg);
 };
+
+
 
 
 int proto_handshake(struct Srv_inst* si, struct Proto_inst* pi,
@@ -147,109 +160,118 @@ int proto_handshake(struct Srv_inst* si, struct Proto_inst* pi,
     int ret;
 
     // Handler 'HELLO' msg
+    memset(pi, 0, sizeof(struct Proto_inst));
     ret = get_peer_msg(si, pi);
     if (ret)
         return -1;
 
     if( pi->cmd == PROTO_CMD_HELLO ) {
-        print_peer_msg(pi);
+        print_peer_msg("Peer <---", pi);
 
         memset(pi, 0, sizeof(struct Proto_inst));
         pi->cmd = PROTO_CMD_HELLO;
         pi->status = PROTO_STS_OK;
         strcpy(pi->msg, "Hi, client -)");
         pi->msg_len = strlen(pi->msg);
+        print_peer_msg("     --->", pi);
 
         ret = send_peer_msg(si, pi);
         if (ret)
             return -1;
 
     } else {
-        err("!!!!!!!!!!!!!!!!");
-        print_peer_msg(pi);
+        print_peer_msg("!!!!!", pi);
         return -1;
     }
 
     // Handler 'GET_PARAM' msg
+    memset(pi, 0, sizeof(struct Proto_inst));
     ret = get_peer_msg(si, pi);
     if (ret)
         return -1;
 
     if( pi->cmd == PROTO_CMD_GET_PARAM ) {
-        print_peer_msg(pi);
+        print_peer_msg("Peer <---", pi);
 
         memset(pi, 0, sizeof(struct Proto_inst));
         pi->cmd = PROTO_CMD_GET_PARAM;
         pi->status = PROTO_STS_OK;
         strcpy(pi->msg, "-w 800 -h 600 -r 20 -o other");
         pi->msg_len = strlen(pi->msg);
+        print_peer_msg("     --->", pi);
 
         ret = send_peer_msg(si, pi);
         if (ret)
             return -1;
 
     } else {
-        err("!!!!!!!!!!!!!!!!");
-        print_peer_msg(pi);
+        print_peer_msg("!!!!!", pi);
         return -1;
     }
 
 
     // Handler 'SET_PARAM' msg
+    memset(pi, 0, sizeof(struct Proto_inst));
     ret = get_peer_msg(si, pi);
     if (ret)
         return -1;
 
     if( pi->cmd == PROTO_CMD_SET_PARAM ) {
-        print_peer_msg(pi);
+        print_peer_msg("Peer <---", pi);
+
+        if( pi->msg_len > 0 ) {
+
+            int offset = sizeof(uint32_t);
+            wi->width = ntohl( *(uint32_t*)(pi->msg + offset) );
+
+            offset += sizeof(uint32_t);
+            wi->height = ntohl( *(uint32_t*)(pi->msg + offset) );
+
+            offset += sizeof(uint32_t);
+            wi->frame_rate = ntohl( *(uint32_t*)(pi->msg + offset) );
+
+            info("Peer <--- New Webcam settings: -w=%d,  -h=%d,  -f=%d",
+                 wi->width, wi->height, wi->frame_rate);
+        }
 
         memset(pi, 0, sizeof(struct Proto_inst));
         pi->cmd = PROTO_CMD_SET_PARAM;
         pi->status = PROTO_STS_OK;
+        print_peer_msg("     --->", pi);
+
         ret = send_peer_msg(si, pi);
         if (ret)
             return -1;
 
     } else {
-        err("!!!!!!!!!!!!!!!!");
-        print_peer_msg(pi);
+        print_peer_msg("!!!!!", pi);
         return -1;
     }
 
     // Handler 'START' msg
+    memset(pi, 0, sizeof(struct Proto_inst));
     ret = get_peer_msg(si, pi);
     if (ret)
         return -1;
 
     if( pi->cmd == PROTO_CMD_START ) {
-        print_peer_msg(pi);
+        print_peer_msg("Peer <---", pi);
 
         // Do something here to start Webcam capture!!!
 
         memset(pi, 0, sizeof(struct Proto_inst));
         pi->cmd = PROTO_CMD_START;
         pi->status = PROTO_STS_OK;
+        print_peer_msg("     --->", pi);
+
         ret = send_peer_msg(si, pi);
         if (ret)
             return -1;
 
     } else {
-        err("!!!!!!!!!!!!!!!!");
-        print_peer_msg(pi);
+        print_peer_msg("!!!!!", pi);
         return -1;
     }
-
-    // Send h264 DATA
-    char bin_data[] = "h264 frame here!!!";
-    memset(pi, 0, sizeof(struct Proto_inst));
-    pi->cmd = PROTO_CMD_DATA;
-    pi->status = PROTO_STS_OK;
-
-    pi->data = bin_data;
-    pi->data_len = strlen(bin_data);
-    ret = send_peer_msg(si, pi);
-    if (ret)
-        return -1;
 
 
     return 0;

@@ -89,9 +89,9 @@ int mainloop(struct Webcam_inst* wcam_i,
 
         // Read data from client
         if( FD_ISSET(srv_i->peer_fd, &read_fds) ) {
-            int data_len = srv_get_data(srv_i);
-            if( data_len < 1 )
-                return 0;
+            ret = get_peer_msg(srv_i, proto_i);
+            if (ret)
+                return -1;
         }
 
         //
@@ -161,10 +161,12 @@ int mainloop(struct Webcam_inst* wcam_i,
                 return -1;
         }
 
-        fprintf(stdout, "%05d\b\b\b\b\b", ++total_frames);
-        if( total_frames > 99999 )
-            total_frames = 0;
-        fflush(stdout);
+        #ifdef ADD_DETAILS
+            fprintf(stdout, "%05d\b\b\b\b\b", ++total_frames);
+            if( total_frames > 99999 )
+                total_frames = 0;
+            fflush(stdout);
+        #endif
     }
 
     return 0;
@@ -185,93 +187,103 @@ int main(int argc, char **argv) {
 
     ret = pars_args(argc, argv, &wcam_inst, &srv_inst, &coda_inst);
     if( ret != 0 )
-        goto err;
+        goto err_1;
 
-    ret = srv_tcp_start(&srv_inst);
+    ret = srv_srv_start(&srv_inst);
     if( ret != 0 )
-        goto err;
+        goto err_1;
 
-    ret = proto_handshake(&srv_inst, &proto_inst, &wcam_inst);
-    if (ret)
-        goto err;
-
-    {
-        ret = wcam_open(&wcam_inst);
-        if (ret != 0)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wmissing-noreturn"
+    while(1) {
+        ret = srv_peer_accept(&srv_inst);
+        if (ret)
             goto err;
 
-        ret = wcam_init(&wcam_inst);
-        if (ret != 0)
+        ret = proto_handshake(&srv_inst, &proto_inst, &wcam_inst);
+        if (ret)
             goto err;
 
-        ret = wcam_start_capturing(&wcam_inst);
-        if (ret != 0)
-            goto err;
-    }
+        {
+            ret = wcam_open(&wcam_inst);
+            if (ret != 0)
+                goto err;
 
-    {
-        coda_inst.width = wcam_inst.width;
-        coda_inst.height = wcam_inst.height;
-        coda_inst.framerate = wcam_inst.frame_rate;
+            ret = wcam_init(&wcam_inst);
+            if (ret != 0)
+                goto err;
 
-        ret = coda_open(&coda_inst);
-        if (ret != 0)
-            goto err;
-
-        ret = coda_init_nv12(&coda_inst);
-        if (ret != 0)
-            goto err;
-
-        ret = coda_init_h264(&coda_inst);
-        if (ret != 0)
-            goto err;
-
-        ret = coda_set_control(&coda_inst);
-        if (ret != 0)
-            goto err;
-
-        int indx;
-        for( indx = 0; indx < coda_inst.buff_264_n; indx++ ) {
-            ret = coda_queue_buf_h264(&coda_inst, indx);
+            ret = wcam_start_capturing(&wcam_inst);
             if (ret != 0)
                 goto err;
         }
+
+        {
+            coda_inst.width = wcam_inst.width;
+            coda_inst.height = wcam_inst.height;
+            coda_inst.framerate = wcam_inst.frame_rate;
+
+            ret = coda_open(&coda_inst);
+            if (ret != 0)
+                goto err;
+
+            ret = coda_init_nv12(&coda_inst);
+            if (ret != 0)
+                goto err;
+
+            ret = coda_init_h264(&coda_inst);
+            if (ret != 0)
+                goto err;
+
+            ret = coda_set_control(&coda_inst);
+            if (ret != 0)
+                goto err;
+
+            int indx;
+            for (indx = 0; indx < coda_inst.buff_264_n; indx++) {
+                ret = coda_queue_buf_h264(&coda_inst, indx);
+                if (ret != 0)
+                    goto err;
+            }
 /*
-        for( indx = 0; indx < coda_inst.buff_nv12_n; indx++ ) {
-            ret = coda_queue_buf_nv12(&coda_inst, indx);
-            if (ret != 0)
-                goto err;
-        }
+            for( indx = 0; indx < coda_inst.buff_nv12_n; indx++ ) {
+                ret = coda_queue_buf_nv12(&coda_inst, indx);
+                if (ret != 0)
+                    goto err;
+            }
 */
 
-        ret = coda_stream_act(&coda_inst, V4L2_BUF_TYPE_VIDEO_CAPTURE, VIDIOC_STREAMON);
+            ret = coda_stream_act(&coda_inst, V4L2_BUF_TYPE_VIDEO_CAPTURE, VIDIOC_STREAMON);
+            if (ret != 0)
+                goto err;
+
+            ret = coda_stream_act(&coda_inst, V4L2_BUF_TYPE_VIDEO_OUTPUT, VIDIOC_STREAMON);
+            if (ret != 0)
+                goto err;
+
+        }
+
+        // Main loop start here!!!
+        ret = mainloop(&wcam_inst, &srv_inst, &coda_inst, &proto_inst);
         if (ret != 0)
             goto err;
 
-        ret = coda_stream_act(&coda_inst, V4L2_BUF_TYPE_VIDEO_OUTPUT, VIDIOC_STREAMON);
-        if (ret != 0)
-            goto err;
 
+        err:
+        printf("\n");
+        wcam_stop_capturing(&wcam_inst);
+        wcam_uninit(&wcam_inst);
+        wcam_close(&wcam_inst);
+
+        coda_stream_act(&coda_inst, V4L2_BUF_TYPE_VIDEO_CAPTURE, VIDIOC_STREAMOFF);
+        coda_stream_act(&coda_inst, V4L2_BUF_TYPE_VIDEO_OUTPUT, VIDIOC_STREAMOFF);
+        coda_close(&coda_inst);
+
+        srv_peer_stop(&srv_inst);
     }
+#pragma clang diagnostic pop
 
-    // Main loop start here!!!
-    ret = mainloop(&wcam_inst, &srv_inst, &coda_inst, &proto_inst);
-    if( ret != 0 )
-        goto err;
-
-
-    printf("\n");
-    wcam_stop_capturing(&wcam_inst);
-    wcam_uninit(&wcam_inst);
-    wcam_close(&wcam_inst);
-
-    coda_stream_act(&coda_inst, V4L2_BUF_TYPE_VIDEO_CAPTURE, VIDIOC_STREAMOFF);
-    coda_stream_act(&coda_inst, V4L2_BUF_TYPE_VIDEO_OUTPUT, VIDIOC_STREAMOFF);
-    coda_close(&coda_inst);
-
-    srv_stop(&srv_inst);
-    return 0;
-err:
+err_1:
     printf("\n");
     wcam_stop_capturing(&wcam_inst);
     wcam_uninit(&wcam_inst);
@@ -281,6 +293,6 @@ err:
     coda_stream_act(&coda_inst, V4L2_BUF_TYPE_VIDEO_OUTPUT, VIDIOC_STREAMOFF);
     coda_close(&coda_inst);
 
-    srv_stop(&srv_inst);
+    srv_srv_stop(&srv_inst);
     return -1;
 }

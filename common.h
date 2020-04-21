@@ -29,15 +29,14 @@
 #include <stdio.h>
 #include <stdint.h>
 
-#define VERSION      "0.1.a"
+#define VERSION      "0.3.a"
 #define TIMEOUT_SEC  5
 
 
 /* When ADD_DETAILS is defined every debug and error message contains
  * information about the file, function and line of code where it has
  * been called */
-#define DEBUG
-#define ADD_DETAILS
+//#define ADD_DETAILS
 
 /* When DEBUG is defined debug messages are printed on the screen.
  * Otherwise only error messages are displayed. */

@@ -10,9 +10,9 @@
 #include "server.h"
 
 
-int srv_tcp_start(struct Srv_inst* i)
+int srv_srv_start(struct Srv_inst* i)
 {
-    struct sockaddr_in servaddr, peer_addr;
+    struct sockaddr_in servaddr;
     socklen_t peer_addr_size;
 
     // socket create and verification
@@ -45,11 +45,15 @@ int srv_tcp_start(struct Srv_inst* i)
         err("Server listen failed... [%m]");
         return -1;
     }
-    info("Server waiting for a client...");
 
-    peer_addr_size = sizeof(struct sockaddr_in);;
+    return 0;
+}
+
+int srv_peer_accept(struct Srv_inst* i) {
+    info("Server waiting for a client on %s:%d...", i->string, i->port);
+
     // Accept the data packet from client and verification
-    i->peer_fd = accept(i->srv_fd, (struct sockaddr*)&peer_addr, &peer_addr_size);
+    i->peer_fd = accept(i->srv_fd, (struct sockaddr*)NULL, NULL);
     if( i->srv_fd < 0 ) {
         err("Client acccept failed... [%m]");
         return -1;
@@ -58,17 +62,22 @@ int srv_tcp_start(struct Srv_inst* i)
     info("Server acccept the client...");
 
     return 0;
+
 }
 
 
-void srv_stop(struct Srv_inst* i) {
-    if( close(i->peer_fd) == -1 )
-        err("'Srv: peer close()");
-
+void srv_srv_stop(struct Srv_inst* i) {
     if( close(i->srv_fd) == -1 )
         err("'Srv: server close()");
 
     info("Server finished successful");
+}
+
+void srv_peer_stop(struct Srv_inst* i) {
+    if( close(i->peer_fd) == -1 )
+        err("'Srv: peer close()");
+
+    info("Peer closed successful");
 }
 
 int srv_send_data(struct Srv_inst* i, void* buff_ptr, size_t buff_len) {
@@ -86,7 +95,7 @@ int srv_send_data(struct Srv_inst* i, void* buff_ptr, size_t buff_len) {
     return 0;
 }
 
-
+/*
 int srv_get_data(struct Srv_inst* i) {
 
     int n_bytes = recv(i->peer_fd, i->read_buff, sizeof(i->read_buff), 0);
@@ -100,6 +109,7 @@ int srv_get_data(struct Srv_inst* i) {
 
     return n_bytes;
 }
+*/
 
 int srv_get_data_1(struct Srv_inst* i, void *buffer, size_t count) {
 

@@ -8,13 +8,13 @@ set(CMAKE_C_STANDARD 99)
 
 
 
-add_executable(v-srv main.c
-        ../server.c
-        ../server.h
-        ../args.c
-        ../args.h
-        ../proto.c
-        ../proto.h)
+#add_executable(v-srv main.c
+#        ../server.c
+#        ../server.h
+#        ../args.c
+#        ../args.h
+#        ../proto.c
+#        ../proto.h)
 
 
 add_executable(v-client v-client.c

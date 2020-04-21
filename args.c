@@ -103,11 +103,11 @@ int pars_args(int argc, char **argv, struct Webcam_inst* wcam_i,
                 colon_ptr = memchr(optarg, ch, strlen(optarg));
                 if( colon_ptr ) {
                     srv_i->addr = INADDR_LOOPBACK;
-                    strcpy(srv_i->string, "loopback");
+                    strcpy(srv_i->string, "127.0.0.1");
                     srv_i->port = strtol(colon_ptr + 1, NULL, 10);
                 } else {
                     srv_i->addr = INADDR_ANY;
-                    strcpy(srv_i->string, "all");
+                    strcpy(srv_i->string, "*");
                     srv_i->port = strtol(optarg, NULL, 10);
                 }
 

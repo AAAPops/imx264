@@ -17,11 +17,14 @@ struct Srv_inst {
 
 
 
-int srv_tcp_start(struct Srv_inst* srv_i);
+int srv_srv_start(struct Srv_inst* srv_i);
+int srv_peer_accept(struct Srv_inst* i);
+
 int srv_send_data(struct Srv_inst* srv_i, void* buff_ptr, size_t buff_len);
 int srv_get_data(struct Srv_inst* i);
 
-void srv_stop(struct Srv_inst* i);
+void srv_srv_stop(struct Srv_inst* i);
+void srv_peer_stop(struct Srv_inst* i);
 
 int srv_get_data_1(struct Srv_inst* i, void *buffer, size_t count);
 
