@@ -32,6 +32,9 @@
 #define VERSION      "0.3.a"
 #define TIMEOUT_SEC  5
 
+#define FOREGROUND 0
+#define BACKGROUND 1
+
 
 /* When ADD_DETAILS is defined every debug and error message contains
  * information about the file, function and line of code where it has
@@ -41,6 +44,7 @@
 /* When DEBUG is defined debug messages are printed on the screen.
  * Otherwise only error messages are displayed. */
 //#define DEBUG
+#ifdef TMP_DISABLE
 
 #ifdef ADD_DETAILS
 #define err(msg, ...) \
@@ -67,6 +71,7 @@
 #define dbg(...) {}
 #endif /* DEBUG */
 
+#endif // New Webcam
 
 #define MEMZERO(x)	memset(&(x), 0, sizeof (x));
 

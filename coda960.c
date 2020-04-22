@@ -11,6 +11,7 @@
 #include <errno.h>
 
 #include "coda960.h"
+#include "log.h"
 
 static char *dbg_type[2] = {"NV12", "H264"};
 static char *dbg_status[2] = {"ON", "OFF"};
@@ -25,11 +26,11 @@ static int is_device_encoder(int fd, const char *name)
 
     MEMZERO(cap);
     if( ioctl(fd, VIDIOC_QUERYCAP, &cap) == -1 ) {
-        err("'%s': Failed to verify capabilities [%m]", name);
+        log_fatal("'%s': Failed to verify capabilities [%m]", name);
         return -1;
     }
 
-    dbg("'%s': driver='%s' bus_info='%s' card='%s'",
+    log_debug("'%s': driver='%s' bus_info='%s' card='%s'",
             name, cap.driver, cap.bus_info, cap.card);
 /*
     dbg("caps (%s): driver=\"%s\" bus_info=\"%s\" card=\"%s\" "
@@ -40,7 +41,7 @@ static int is_device_encoder(int fd, const char *name)
 */
     if( !(cap.capabilities & V4L2_CAP_STREAMING ) ||
         !(cap.capabilities & V4L2_CAP_VIDEO_M2M)) {
-        err("'%s': Insufficient capabilities for video device", name);
+        log_fatal("'%s': Insufficient capabilities for video device", name);
         return -1;
     }
 
@@ -50,7 +51,7 @@ static int is_device_encoder(int fd, const char *name)
     for( fmtdesc.index = 0;; fmtdesc.index++ ) {
         ret = ioctl(fd, VIDIOC_ENUM_FMT, &fmtdesc);
         if( ret == -1 ) {
-            err("'%s': does not support NV12 pixel format", name);
+            log_fatal("'%s': does not support NV12 pixel format", name);
             return -1;
         }
 
@@ -65,7 +66,7 @@ static int is_device_encoder(int fd, const char *name)
     for( fmtdesc.index = 0;; fmtdesc.index++ ) {
         ret = ioctl(fd, VIDIOC_ENUM_FMT, &fmtdesc);
         if( ret == -1 ) {
-            err("'%s': does not support h264 pixel format", name);
+            log_fatal("'%s': does not support h264 pixel format", name);
             return -1;
         }
 
@@ -86,7 +87,7 @@ int coda_open(struct Coda_inst *i)
 
     i->coda_fd = open(i->coda_name, O_RDWR, 0);
     if( i->coda_fd < 0 ) {
-        err("'%s': failed to open video device", i->coda_name);
+        log_fatal("'%s': failed to open video device", i->coda_name);
         return -1;
     }
 
@@ -95,7 +96,7 @@ int coda_open(struct Coda_inst *i)
         return -1;
 
 
-    info("'%s': is a real nv12-to-h264 encoder", i->coda_name);
+    log_info("'%s': is a real nv12-to-h264 encoder", i->coda_name);
     return 0;
 }
 
@@ -103,7 +104,7 @@ void coda_close(struct Coda_inst *i)
 {
     close(i->coda_fd);
 
-    info("Coda closed successful");
+    log_info("Coda closed successful");
 }
 
 
@@ -125,12 +126,12 @@ int coda_init_nv12(struct Coda_inst *i)
 
     ret = ioctl(i->coda_fd, VIDIOC_TRY_FMT, &try_fmt);
     if( ret == -1 ) {
-        err("Init_NV12: TRY_FMT failed (%ux%u) [%m]",
+        log_fatal("Init_NV12: TRY_FMT failed (%ux%u) [%m]",
             try_fmt.fmt.pix.width, try_fmt.fmt.pix.height);
         return -1;
     }
 
-    info("Init_NV12: Try format %ux%u, sizeimage %u, bpl %u",
+    log_info("Init_NV12: Try format %ux%u, sizeimage %u, bpl %u",
          try_fmt.fmt.pix.width, try_fmt.fmt.pix.height,
          try_fmt.fmt.pix.sizeimage, try_fmt.fmt.pix.bytesperline);
 
@@ -142,12 +143,12 @@ int coda_init_nv12(struct Coda_inst *i)
 
     ret = ioctl(i->coda_fd, VIDIOC_S_FMT, &fmt);
     if( ret == -1 ) {
-        err("Init_NV12: S_FMT failed %ux%u [%m]",
+        log_fatal("Init_NV12: S_FMT failed %ux%u [%m]",
                 fmt.fmt.pix.width, fmt.fmt.pix.height);
         return -1;
     }
 
-    info("Init_NV12: Set format %ux%u, sizeimage %u, bpl %u",
+    log_info("Init_NV12: Set format %ux%u, sizeimage %u, bpl %u",
          fmt.fmt.pix.width, fmt.fmt.pix.height,
          fmt.fmt.pix.sizeimage, fmt.fmt.pix.bytesperline);
 
@@ -158,11 +159,11 @@ int coda_init_nv12(struct Coda_inst *i)
 
     ret = ioctl(i->coda_fd, VIDIOC_G_FMT, &get_fmt);
     if (ret) {
-        err("Init_NV12: get_fmt failed [%m]");
+        log_fatal("Init_NV12: get_fmt failed [%m]");
         return -1;
     }
 
-    info("Init_NV12: Get format %ux%u, sizeimage %u, bpl %u",
+    log_info("Init_NV12: Get format %ux%u, sizeimage %u, bpl %u",
          get_fmt.fmt.pix.width, get_fmt.fmt.pix.height,
          get_fmt.fmt.pix.sizeimage,
          get_fmt.fmt.pix.bytesperline);
@@ -178,13 +179,13 @@ int coda_init_nv12(struct Coda_inst *i)
 
     ret = ioctl(i->coda_fd, VIDIOC_REQBUFS, &reqbuf);
     if( ret == -1 ) {
-        err("Init_NV12: REQBUFS failed [%m]");
+        log_fatal("Init_NV12: REQBUFS failed [%m]");
         return -1;
     }
 
     i->buff_nv12_n = reqbuf.count;
 
-    info("Init_NV12: Number of buffers %d (requested %d)",
+    log_info("Init_NV12: Number of buffers %d (requested %d)",
          i->buff_nv12_n, NV12_REQBUF_CNT);
 
     for( iter = 0; iter < i->buff_nv12_n; iter++) {
@@ -195,7 +196,7 @@ int coda_init_nv12(struct Coda_inst *i)
 
         ret = ioctl(i->coda_fd, VIDIOC_QUERYBUF, &buf);
         if (ret) {
-            err("Init_NV12: QUERYBUF failed [%m]");
+            log_fatal("Init_NV12: QUERYBUF failed [%m]");
             return -1;
         }
 
@@ -208,13 +209,13 @@ int coda_init_nv12(struct Coda_inst *i)
                 i->coda_fd,  buf.m.offset);
 
         if( i->buff_nv12[iter].start == MAP_FAILED ) {
-            err("Init_NV12: MMAP failed [%m]");
+            log_fatal("Init_NV12: MMAP failed [%m]");
             return -1;
         }
 
     }
 
-    info("Init_NV12: Succesfully m-mapped %d buffer(s)", i->buff_nv12_n);
+    log_info("Init_NV12: Succesfully m-mapped %d buffer(s)", i->buff_nv12_n);
 
     return 0;
 }
@@ -235,11 +236,11 @@ int coda_init_h264(struct Coda_inst *i)
     fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_H264;
     ret = ioctl(i->coda_fd, VIDIOC_S_FMT, &fmt);
     if( ret == -1 ) {
-        err("Init_h264: S_FMT failed (%ux%u) [%m]", i->width, i->height);
+        log_fatal("Init_h264: S_FMT failed (%ux%u) [%m]", i->width, i->height);
         return -1;
     }
 
-    info("Init_h264: Set format %ux%u, sizeimage %u, bpl %u, pixelformat:%x",
+    log_info("Init_h264: Set format %ux%u, sizeimage %u, bpl %u, pixelformat:%x",
          fmt.fmt.pix.width, fmt.fmt.pix.height,
          fmt.fmt.pix.sizeimage, fmt.fmt.pix.bytesperline,
          fmt.fmt.pix.pixelformat);
@@ -260,13 +261,13 @@ int coda_init_h264(struct Coda_inst *i)
 
     ret = ioctl(i->coda_fd, VIDIOC_REQBUFS, &reqbuf);
     if( ret == -1 ) {
-        err("Init_h264: REQBUFS failed [%m]");
+        log_fatal("Init_h264: REQBUFS failed [%m]");
         return -1;
     }
 
     i->buff_264_n = reqbuf.count;
 
-    info("Init_h264: Number of buffers %u (requested %u)",
+    log_info("Init_h264: Number of buffers %u (requested %u)",
          i->buff_264_n, H264_REQBUF_CNT);
 
     for( iter = 0; iter < i->buff_264_n; iter++) {
@@ -277,7 +278,7 @@ int coda_init_h264(struct Coda_inst *i)
 
         ret = ioctl(i->coda_fd, VIDIOC_QUERYBUF, &buf);
         if( ret == -1 ) {
-            err("Init_h264: QUERYBUF failed [%m]");
+            log_fatal("Init_h264: QUERYBUF failed [%m]");
             return -1;
         }
 
@@ -289,12 +290,12 @@ int coda_init_h264(struct Coda_inst *i)
                 i->coda_fd, buf.m.offset);
 
         if( i->buff_264[iter].start == MAP_FAILED) {
-            err("Init_h264: MMAP failed [%d]");
+            log_fatal("Init_h264: MMAP failed [%d]");
             return -1;
         }
     }
 
-    info("Init_h264: Succesfully m-mapped %d buffer(s)", i->buff_264_n);
+    log_info("Init_h264: Succesfully m-mapped %d buffer(s)", i->buff_264_n);
 
     return 0;
 }
@@ -311,13 +312,13 @@ int coda_set_control(struct Coda_inst *i)
     parm.parm.output.timeperframe.numerator = 1;
     parm.parm.output.timeperframe.denominator = i->framerate;
 
-    info("Set_ctrl: setting framerate: %u (%u/%u)", i->framerate,
+    log_info("Set_ctrl: setting framerate: %u (%u/%u)", i->framerate,
          parm.parm.output.timeperframe.numerator,
          parm.parm.output.timeperframe.denominator);
 
     ret = ioctl(i->coda_fd, VIDIOC_S_PARM, &parm);
     if( ret == -1 ) {
-        err("Set_ctrl: set framerate [%m]");
+        log_fatal("Set_ctrl: set framerate [%m]");
         return -1;
     }
 
@@ -327,11 +328,11 @@ int coda_set_control(struct Coda_inst *i)
         cntrl.id = V4L2_CID_MPEG_VIDEO_BITRATE;
         cntrl.value = i->bitrate;
 
-        info("Set_ctrl: setting bitrate: %d", cntrl.value);
+        log_info("Set_ctrl: setting bitrate: %d", cntrl.value);
 
         ret = ioctl(i->coda_fd, VIDIOC_S_CTRL, &cntrl);
         if (ret == -1) {
-            err("Set_ctrl: set bitrate [%m]");
+            log_fatal("Set_ctrl: set bitrate [%m]");
             return -1;
         }
     }
@@ -340,20 +341,20 @@ int coda_set_control(struct Coda_inst *i)
     MEMZERO(cntrl);
     cntrl.id = V4L2_CID_MPEG_VIDEO_H264_PROFILE;
     cntrl.value = V4L2_MPEG_VIDEO_H264_PROFILE_BASELINE;
-    info("Set_ctrl: setting h264 profile: %d", cntrl.value);
+    log_info("Set_ctrl: setting h264 profile: %d", cntrl.value);
     ret = ioctl(i->coda_fd, VIDIOC_S_CTRL, &cntrl);
     if( ret == -1 ) {
-        err("Set_ctrl: set H264_PROFILE [%m]");
+        log_fatal("Set_ctrl: set H264_PROFILE [%m]");
         return -1;
     }
 
     MEMZERO(cntrl);
     cntrl.id = V4L2_CID_MPEG_VIDEO_H264_LEVEL;
     cntrl.value = V4L2_MPEG_VIDEO_H264_LEVEL_4_0;
-    info("Set_ctrl: setting h264 level: %u", cntrl.value);
+    log_info("Set_ctrl: setting h264 level: %u", cntrl.value);
     ret = ioctl(i->coda_fd, VIDIOC_S_CTRL, &cntrl);
     if( ret == -1 ) {
-        err("Set_ctrl: set H264_LEVEL_4_0 [%m]");
+        log_fatal("Set_ctrl: set H264_LEVEL_4_0 [%m]");
         return -1;
     }
 
@@ -362,15 +363,15 @@ int coda_set_control(struct Coda_inst *i)
         MEMZERO(cntrl);
         cntrl.id = V4L2_CID_MPEG_VIDEO_B_FRAMES;
         cntrl.value = i->num_bframes;
-        info("Set_ctrl: setting num B-frames: %d", cntrl.value);
+        log_info("Set_ctrl: setting num B-frames: %d", cntrl.value);
         ret = ioctl(i->coda_fd, VIDIOC_S_CTRL, &cntrl);
         if (ret == -1) {
-            err("Set_ctrl: set num B-frames [%m]");
+            log_fatal("Set_ctrl: set num B-frames [%m]");
             return -1;
         }
     }
 
-    info("Set_ctrl: Succesfully set all Controls");
+    log_info("Set_ctrl: Succesfully set all Controls");
     return 0;
 }
 
@@ -412,13 +413,13 @@ static int coda_queue_buf(struct Coda_inst *i,
 */
     ret = ioctl(i->coda_fd, VIDIOC_QBUF, &buf);
     if( ret == -1 ) {
-        err("Failed to queue buffer[%d] on %s [%m]",
+        log_fatal("Failed to queue buffer[%d] on %s [%m]",
             buf.index,
             dbg_type[type==V4L2_BUF_TYPE_VIDEO_CAPTURE]);
         return -1;
     }
 
-    dbg("Queued buffer[%d] on %s queue",
+    log_debug("Queued buffer[%d] on %s queue",
         buf.index, dbg_type[type==V4L2_BUF_TYPE_VIDEO_CAPTURE]);
 
     return 0;
@@ -428,7 +429,7 @@ static int coda_queue_buf(struct Coda_inst *i,
 int coda_queue_buf_h264(struct Coda_inst *i, unsigned int index)
 {
     if( index >= i->buff_264_n ) {
-        err("Tried to queue a non exisiting buffer");
+        log_fatal("Tried to queue a non exisiting buffer");
         return -1;
     }
 
@@ -443,7 +444,7 @@ int coda_queue_buf_h264(struct Coda_inst *i, unsigned int index)
 int coda_queue_buf_nv12(struct Coda_inst *i, unsigned int index)
 {
     if( index >= i->buff_nv12_n) {
-        err("Tried to queue a non exisiting buffer");
+        log_fatal("Tried to queue a non exisiting buffer");
         return -1;
     }
 
@@ -463,13 +464,13 @@ int coda_stream_act(struct Coda_inst *i, unsigned int type,
 
     ret = ioctl(i->coda_fd, action, &type);
     if( ret == -1 ) {
-        err("Failed to change streaming (type=%s, status=%s)",
+        log_fatal("Failed to change streaming (type=%s, status=%s)",
             dbg_type[type == V4L2_BUF_TYPE_VIDEO_CAPTURE],
             dbg_status[action == VIDIOC_STREAMOFF]);
         return -1;
     }
 
-    dbg("Stream %s on %s queue", dbg_status[action == VIDIOC_STREAMOFF],
+    log_info("Stream %s on %s queue", dbg_status[action == VIDIOC_STREAMOFF],
         dbg_type[type == V4L2_BUF_TYPE_VIDEO_CAPTURE]);
 
     return 0;
@@ -482,11 +483,11 @@ static int coda_dequeue_buf(struct Coda_inst *i, struct v4l2_buffer *buf)
 
     ret = ioctl(i->coda_fd, VIDIOC_DQBUF, buf);
     if (ret < 0) {
-        err("Failed to dequeue buffer [%m]");
+        log_fatal("Failed to dequeue buffer [%m]");
         return -1;
     }
 
-    dbg("Dequeued buffer on %s queue with index %d (flags:%x, bytesused:%d)",
+    log_debug("Dequeued buffer on %s queue with index %d (flags:%x, bytesused:%d)",
         dbg_type[buf->type == V4L2_BUF_TYPE_VIDEO_CAPTURE],
         buf->index, buf->flags, buf->bytesused);
 

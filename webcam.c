@@ -13,6 +13,7 @@
 #include <linux/videodev2.h>
 
 #include "webcam.h"
+#include "log.h"
 
 static int xioctl(int fh, int request, void *arg)
 {
@@ -32,11 +33,11 @@ int yuyv_to_nv12_neon(char *in_buff_ptr, size_t in_buff_sz,
     // Sanity checks first
     {
         if (width % 4 != 0) {
-            err("Frame width must be a multiple of 4!");
+            log_fatal("Frame width must be a multiple of 4!");
             return -1;
         }
         if (height % 2 != 0) {
-            err("Frame height must be a multiple of 2!");
+            log_fatal("Frame height must be a multiple of 2!");
             return -1;
         }
 
@@ -46,14 +47,14 @@ int yuyv_to_nv12_neon(char *in_buff_ptr, size_t in_buff_sz,
         uint8_t mpix422_sz = 16;
         uint32_t YCrCb_422_sz = n_macro_pix * mpix422_sz;
         if (in_buff_sz != YCrCb_422_sz) {
-            err("Input buffer size must be exactly %d bytes", YCrCb_422_sz);
+            log_fatal("Input buffer size must be exactly %d bytes", YCrCb_422_sz);
             return -1;
         }
 
         uint8_t mpix420_sz = 12;
         uint32_t YCrCb_420_sz = n_macro_pix * mpix420_sz;
         if (out_buff_sz < YCrCb_420_sz) {
-            err("Output buffer size must be at least %d bytes", YCrCb_420_sz);
+            log_fatal("Output buffer size must be at least %d bytes", YCrCb_420_sz);
             return -1;
         }
     }
@@ -162,7 +163,7 @@ int wcam_process_new_frame(struct Webcam_inst* i)
                 /* fall through */
 
             default: {
-                err("ioctl(VIDIOC_DQBUF)");
+                log_fatal("ioctl(VIDIOC_DQBUF)");
                 return -1;
             }
         }
@@ -180,7 +181,7 @@ int wcam_process_new_frame(struct Webcam_inst* i)
         return -1;
 
     if( xioctl(i->wcam_fd, VIDIOC_QBUF, &buf) == -1 ){
-        err("ioctl(VIDIOC_QBUF)");
+        log_fatal("ioctl(VIDIOC_QBUF)");
         return -1;
     }
 
@@ -206,7 +207,7 @@ int wcam_dequeue_buf(struct Webcam_inst *i, unsigned int *index){
                 /* fall through */
 
             default: {
-                err("ioctl(VIDIOC_DQBUF) [%m]");
+                log_fatal("ioctl(VIDIOC_DQBUF) [%m]");
                 return -1;
             }
         }
@@ -230,7 +231,7 @@ int wcam_queue_buf(struct Webcam_inst *i, unsigned int index){
 
     ret = xioctl(i->wcam_fd, VIDIOC_QBUF, &buf);
     if( ret == -1 ){
-        err("ioctl(VIDIOC_QBUF) [%m]");
+        log_fatal("ioctl(VIDIOC_QBUF) [%m]");
         return -1;
     }
 
@@ -294,18 +295,18 @@ int wcam_start_capturing(struct Webcam_inst* i)
         buf.index = iter;
 
         if( xioctl(i->wcam_fd, VIDIOC_QBUF, &buf) == -1 ) {
-            err("ioctl(VIDIOC_QBUF)");
+            log_fatal("ioctl(VIDIOC_QBUF) [%m]");
             return -1;
         }
     }
 
     type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     if( xioctl(i->wcam_fd, VIDIOC_STREAMON, &type) == -1 ) {
-        err("ioctl(VIDIOC_STREAMON)");
+        log_fatal("ioctl(VIDIOC_STREAMON) [%m]");
         return -1;
     }
 
-    dbg("Webcam device '%s' wcam_start_capturing() successfull", i->wcam_name);
+    log_debug("Webcam device '%s' wcam_start_capturing() successfull", i->wcam_name);
     return 0;
 }
 
@@ -323,17 +324,17 @@ static int init_nv12_buff(struct Webcam_inst* i) {
     //info("YCrCb 4:2:2 picture size = %d bytes", YCrCb_422);
 
     uint32_t YCrCb_420_sz = n_macro_pix * MPIX420_SZ;
-    info("YCrCb 4:2:0 picture size = %d bytes", YCrCb_420_sz);
+    log_info("YCrCb 4:2:0 picture size = %d bytes", YCrCb_420_sz);
 
 
     i->nv12_buff.length = YCrCb_420_sz;
     i->nv12_buff.start = (char *)calloc(i->nv12_buff.length, sizeof(char));
     if( !i->nv12_buff.start ) {
-        err("calloc(nv12_buff)");
+        log_fatal("calloc(nv12_buff) [%m]");
         return -1;
     }
 
-    dbg("Webcam device '%s' NV12 buffer init successfull", i->wcam_name);
+    log_info("Webcam device '%s' NV12 buffer init successfull", i->wcam_name);
     return 0;
 }
 
@@ -349,16 +350,16 @@ static int init_mmap(struct Webcam_inst* i) {
 
     if( xioctl(i->wcam_fd, VIDIOC_REQBUFS, &reqbuf) != 0) {
         if (EINVAL == errno) {
-            err("'%s' does not support memory mapping", i->wcam_name);
+            log_fatal("'%s' does not support memory mapping", i->wcam_name);
             return -1;
         } else {
-            err("ioctl(VIDIOC_REQBUFS)");
+            log_fatal("ioctl(VIDIOC_REQBUFS)");
             return -1;
         }
     }
 
     if( reqbuf.count < 2 ) {
-        err("Insufficient buffer memory on '%s'", i->wcam_name);
+        log_fatal("Insufficient buffer memory on '%s'", i->wcam_name);
         return -1;
     }
 
@@ -382,7 +383,7 @@ static int init_mmap(struct Webcam_inst* i) {
         buff.index    = iter;
 
         if( xioctl(i->wcam_fd, VIDIOC_QUERYBUF, &buff) == -1 ) {
-            err("ioctl(VIDIOC_QUERYBUF)");
+            log_fatal("ioctl(VIDIOC_QUERYBUF)");
             return -1;
         }
 
@@ -395,12 +396,12 @@ static int init_mmap(struct Webcam_inst* i) {
                      i->wcam_fd, buff.m.offset);
 
         if( i->buffers[iter].start == MAP_FAILED ) {
-            err("mmap()");
+            log_fatal("mmap()");
             return -1;
         }
         //info("Webcam buffers[%d].length = %d", iter, buff.length);
     }
-    dbg("Webcam device '%s' buffers mmap() successfull", i->wcam_name);
+    log_debug("Webcam device '%s' buffers mmap() successfull", i->wcam_name);
 
     int ret = init_nv12_buff(i);
     if( ret == -1 )
@@ -421,17 +422,17 @@ int wcam_init(struct Webcam_inst* i)
     int ret;
 
     if( xioctl(i->wcam_fd, VIDIOC_QUERYCAP, &cap) != 0 ) {
-        err("'%s' is not V4L2 device", i->wcam_name);
+        log_fatal("'%s' is not V4L2 device", i->wcam_name);
         return -1;
     }
 
     if( !(cap.capabilities & V4L2_CAP_VIDEO_CAPTURE) ) {
-        err("'%s' is no video capture device", i->wcam_name);
+        log_fatal("'%s' is no video capture device", i->wcam_name);
         return -1;
     }
 
     if( !(cap.capabilities & V4L2_CAP_STREAMING) ) {
-        err("'%s' does not support streaming i/o", i->wcam_name);
+        log_fatal("'%s' does not support streaming i/o", i->wcam_name);
         return -1;
     }
 
@@ -475,7 +476,7 @@ int wcam_init(struct Webcam_inst* i)
     fmt.fmt.pix.field       = V4L2_FIELD_INTERLACED;
 
     if( xioctl(i->wcam_fd, VIDIOC_S_FMT, &fmt) != 0 ) {
-        err("'%s' can not set frame format %dx%d",
+        log_fatal("'%s' can not set frame format %dx%d",
                 i->wcam_name, i->width, i->height);
         return -1;
     }
@@ -495,7 +496,7 @@ int wcam_init(struct Webcam_inst* i)
 
     streamparm.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     if( xioctl(i->wcam_fd, VIDIOC_G_PARM, &streamparm) != 0 ) {
-        err("'%s' can not get stream params: %m \n", i->wcam_name);
+        log_fatal("'%s' can not get stream params: %m \n", i->wcam_name);
         return -1;
     }
 
@@ -503,7 +504,7 @@ int wcam_init(struct Webcam_inst* i)
     streamparm.parm.capture.timeperframe.numerator = 1;
     streamparm.parm.capture.timeperframe.denominator = i->frame_rate;
     if( xioctl(i->wcam_fd, VIDIOC_S_PARM, &streamparm) !=0 ) {
-        err("'%s' can not set frame rate: %m \n", i->wcam_name);
+        log_fatal("'%s' can not set frame rate: %m \n", i->wcam_name);
         return -1;
     }
 
@@ -511,7 +512,7 @@ int wcam_init(struct Webcam_inst* i)
     if( ret != 0 )
         return -1;
 
-    dbg("Webcam device '%s' initialized successfull", i->wcam_name);
+    log_info("Webcam device '%s' initialized successfull", i->wcam_name);
     return 0;
 }
 
@@ -521,21 +522,21 @@ int wcam_open(struct Webcam_inst* i) {
 
     i->wcam_fd = open(i->wcam_name, O_RDWR | O_NONBLOCK, 0);
     if( i->wcam_fd < 0 ) {
-        err("Can not open Webcam device'%s'", i->wcam_name);
+        log_fatal("Can not open Webcam device'%s'", i->wcam_name);
         return -1;
     }
 
     if( fstat(i->wcam_fd, &st) < 0 ) {
-        err("Can not identify'%s'", i->wcam_name);
+        log_fatal("Can not identify'%s'", i->wcam_name);
         return -1;
     }
 
     if (!S_ISCHR(st.st_mode)) {
-        err("'%s' is no char device", i->wcam_name);
+        log_fatal("'%s' is no char device", i->wcam_name);
         return -1;
     }
 
-    dbg("Webcam device '%s' opened successfull", i->wcam_name);
+    log_info("Webcam device '%s' opened successfull", i->wcam_name);
     return 0;
 }
 
@@ -545,10 +546,10 @@ void wcam_stop_capturing(struct Webcam_inst* i)
 
     type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     if( xioctl(i->wcam_fd, VIDIOC_STREAMOFF, &type) == -1 ) {
-        err("'%s': ioctl(VIDIOC_STREAMOFF)", i->wcam_name);
+        log_fatal("'%s': ioctl(VIDIOC_STREAMOFF)", i->wcam_name);
     }
 
-    info("Webcam stop capturing");
+    log_info("Webcam stop capturing");
 }
 
 void wcam_uninit(struct Webcam_inst* i) {
@@ -556,7 +557,7 @@ void wcam_uninit(struct Webcam_inst* i) {
 
     for (iter = 0; iter < i->buffers_n; iter++ ) {
         if( munmap(i->buffers[iter].start, i->buffers[iter].length) == -1 )
-            err("'%s': munmap", i->wcam_name);
+            log_fatal("'%s': munmap", i->wcam_name);
     }
 
     free(i->nv12_buff.start);
@@ -565,7 +566,7 @@ void wcam_uninit(struct Webcam_inst* i) {
 void wcam_close(struct Webcam_inst* i)
 {
     if( close(i->wcam_fd) == -1 )
-        err("'%s': webcam close", i->wcam_name);
+        log_fatal("'%s': webcam close", i->wcam_name);
 
-    info("Webcam closed successful");
+    log_info("Webcam closed successful");
 }

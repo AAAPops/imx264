@@ -5,6 +5,7 @@
 #include <sys/select.h>
 
 #include "common.h"
+#include "log.h"
 #include "args.h"
 #include "webcam.h"
 #include "server.h"
@@ -80,10 +81,10 @@ int mainloop(struct Webcam_inst* wcam_i,
 
         ret = select(fds_max + 1, &read_fds, NULL, NULL, &tv);
         if( ret == -1 ) {
-            err("select()");
+            log_fatal("select() [%m]");
             return -1;
         } else if( ret == 0 ) {
-            err("select() timeout to get one more frame from Webcam");
+            log_fatal("select() timeout");
             return -1;
         }
 
@@ -161,12 +162,13 @@ int mainloop(struct Webcam_inst* wcam_i,
                 return -1;
         }
 
-        #ifdef ADD_DETAILS
+        if( srv_i->run_mode == FOREGROUND ) {
             fprintf(stdout, "%05d\b\b\b\b\b", ++total_frames);
-            if( total_frames > 99999 )
+            if (total_frames > 99999)
                 total_frames = 0;
             fflush(stdout);
-        #endif
+        }
+
     }
 
     return 0;

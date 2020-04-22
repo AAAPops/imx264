@@ -16,12 +16,14 @@ set(CMAKE_C_STANDARD 99)
 #        ../proto.c
 #        ../proto.h)
 
+add_definitions(-DLOG_USE_COLOR)
 
 add_executable(v-client v-client.c
         ../server.c
         ../server.h
         ../proto.c
-        ../proto.h)
+        ../proto.h
+        ../log.c)
 
 
 

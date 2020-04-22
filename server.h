@@ -12,6 +12,8 @@ struct Srv_inst {
     int        srv_fd;
     int        peer_fd;
 
+    int        run_mode;
+
     uint8_t    read_buff[128];
 };
 

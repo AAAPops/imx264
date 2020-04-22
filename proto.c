@@ -5,6 +5,7 @@
 #include <arpa/inet.h>
 
 #include "common.h"
+#include "log.h"
 #include "server.h"
 #include "webcam.h"
 #include "proto.h"
@@ -144,10 +145,10 @@ void print_peer_msg(char *label, struct Proto_inst* p){
 
 
     if( p->cmd == PROTO_CMD_DATA ) {
-        info("%s Cmd = %s, Status = %s, DataLen = %d, data = 'binary data'",
+        log_debug("%s Cmd = %s, Status = %s, DataLen = %d, data = 'binary data'",
                 label, cmd, status, p->data_len);
     } else
-        info("%s Cmd = %s, Status = %s, MsgLen = %d, msg = '%s'",
+        log_debug("%s Cmd = %s, Status = %s, MsgLen = %d, msg = '%s'",
              label, cmd, status, p->msg_len, p->msg);
 };
 
@@ -196,7 +197,7 @@ int proto_handshake(struct Srv_inst* si, struct Proto_inst* pi,
         memset(pi, 0, sizeof(struct Proto_inst));
         pi->cmd = PROTO_CMD_GET_PARAM;
         pi->status = PROTO_STS_OK;
-        strcpy(pi->msg, "-w 800 -h 600 -r 20 -o other");
+        strcpy(pi->msg, "-w XXX -h YYY -r ZZ");
         pi->msg_len = strlen(pi->msg);
         print_peer_msg("     --->", pi);
 
@@ -230,7 +231,7 @@ int proto_handshake(struct Srv_inst* si, struct Proto_inst* pi,
             offset += sizeof(uint32_t);
             wi->frame_rate = ntohl( *(uint32_t*)(pi->msg + offset) );
 
-            info("Peer <--- New Webcam settings: -w=%d,  -h=%d,  -f=%d",
+            log_debug("Peer <--- msg = '-w=%d,  -h=%d,  -f=%d'",
                  wi->width, wi->height, wi->frame_rate);
         }
 

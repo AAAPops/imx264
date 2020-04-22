@@ -9,10 +9,11 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
-#include "../common.h"
+//#include "../common.h"
 #include "../webcam.h"
 #include "../server.h"
 #include "../proto.h"
+#include "../log.h"
 
 #define SA struct sockaddr
 #define IP_ADDR "10.1.91.123"
@@ -33,17 +34,17 @@ struct Args_inst {
 };
 
 
-int make_connection(struct Srv_inst* i) {
+int make_srv_connect(struct Srv_inst* i) {
     struct sockaddr_in servaddr;
     MEMZERO(servaddr);
 
     // socket create and verification
     i->peer_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (i->peer_fd == -1) {
-        err("Socket creation failed...");
+        log_fatal("Socket creation failed...");
         return -1;
     }
-    info("Socket successfully created..");
+    log_info("Socket successfully created..");
 
     // assign IP, PORT
     servaddr.sin_family = AF_INET;
@@ -53,64 +54,105 @@ int make_connection(struct Srv_inst* i) {
     // connect the client socket to server socket
     int ret = connect(i->peer_fd, (SA*)&servaddr, sizeof(servaddr));
     if (ret) {
-        err("Connection with the server failed...");
+        log_fatal("Connection with the server failed...");
         return -1;
     }
-    info("Connected to the server..");
+    log_info("Connected to the server..");
 
     return 0;
 }
 
+void usage(char **argv) {
+    fprintf(stderr, "Version %s \n", VERSION);
+    fprintf(stderr, "Usage: %s -w Width -h Height -f Framerate [-D debug level]\n",
+            argv[0]);
+
+    fprintf(stderr,"Options: \n");
+    fprintf(stderr, "\t-w     Frame width resolution [320..1920] \n");
+    fprintf(stderr, "\t-h     Frame height resolution [240..1080]\n");
+    fprintf(stderr, "\t-f     Framerate [5..30] \n");
+    fprintf(stderr, "\t-D     Debug level [0..6] \n");
+}
+
 int pars_args(int argc, char **argv, struct Args_inst *ai){
-    int rez=0;
+    int rez;
+    int loglevel = 0;
+    log_set_level(loglevel);
+
+    ai->width = 0;
+    ai->height = 0;
+    ai->framerate = 0;
+
+    if( argc == 1 ) {
+        usage(argv);
+        exit(0);
+    }
 
 //	opterr=0;
-    while ( (rez = getopt(argc,argv,"w:h:f:")) != -1){
+    while ( (rez = getopt(argc,argv,"w:h:f:D:")) != -1){
         switch (rez){
             case 'w':
                 ai->width = strtol(optarg, NULL, 10);
                 if( ai->width < 320 || ai->width > 1920 ) {
-                    err("A problem with parameter '-w'");
+                    log_fatal("A problem with parameter '-w'");
                     return -1;
                 }
                 break;
             case 'h':
                 ai->height = strtol(optarg, NULL, 10);
                 if( ai->height < 240 || ai->height > 1080 ) {
-                    err("A problem with parameter '-h'");
+                    log_fatal("A problem with parameter '-h'");
                     return -1;
                 }
                 break;
             case 'f':
                 ai->framerate = strtol(optarg, NULL, 10);
                 if( ai->framerate < 5 || ai->framerate > 30 ) {
-                    err("A problem with parameter '-f'");
+                    log_fatal("A problem with parameter '-f'");
                     return -1;
                 }
                 break;
+            case 'D':
+                loglevel = strtol(optarg, NULL, 10);
+                if( loglevel < LOG_TRACE || loglevel > LOG_FATAL ) {
+                    log_fatal("A problem with parameter '-h'");
+                    return -1;
+                }
+                log_set_level(loglevel);
+                break;
+
             case '?':
-                dbg("Error in arguments found!");
+            default:
+                log_error("Error in arguments found!");
                 break;
         }
     }
-    info("Args: -w = %d,  -h = %d,  -f = %d",
+    log_debug("Normalized Args: -w = %d,  -h = %d,  -f = %d",
          ai->width, ai->height, ai->framerate);
+    if( ai->width == 0 || ai->height == 0 || ai->framerate == 0) {
+        usage(argv);
+        exit(-1);
+    }
 
+    return 0;
+}
+
+int serialize_args(struct Args_inst *ai) {
     ai->binstr_len = 0;
 
-    *(uint32_t*)(ai->binstr + ai->binstr_len) = 0;
+    *(uint32_t *) (ai->binstr + ai->binstr_len) = 0;
     ai->binstr_len += sizeof(uint32_t);
 
-    *(uint32_t*)(ai->binstr + ai->binstr_len) = htonl(ai->width);
+    *(uint32_t *) (ai->binstr + ai->binstr_len) = htonl(ai->width);
     ai->binstr_len += sizeof(uint32_t);
 
-    *(uint32_t*)(ai->binstr + ai->binstr_len) = htonl(ai->height);
+    *(uint32_t *) (ai->binstr + ai->binstr_len) = htonl(ai->height);
     ai->binstr_len += sizeof(uint32_t);
 
-    *(uint32_t*)(ai->binstr + ai->binstr_len) = htonl(ai->framerate);
+    *(uint32_t *) (ai->binstr + ai->binstr_len) = htonl(ai->framerate);
     ai->binstr_len += sizeof(uint32_t);
 
-    info("\t binstr_len = %d", ai->binstr_len);
+    log_debug("Packed binary string len = %d", ai->binstr_len);
 
     return 0;
 }
@@ -132,14 +174,14 @@ int main(int argc, char **argv)
 
     char h264_buf[H264_BUFF_SZ];
 
-    pars_args(argc, argv, &args_inst);
-
-
-    ret = make_connection(&clnt_inst);
-    if (ret) {
-        err("Connection with the server failed...");
+    ret = pars_args(argc, argv, &args_inst);
+    if (ret)
         goto err;
-    }
+
+
+    ret = make_srv_connect(&clnt_inst);
+    if (ret)
+        goto err;
 
     //Send HELLO and greating message
     {
@@ -159,7 +201,7 @@ int main(int argc, char **argv)
         // Analyze answer from server:
         if( proto_inst.cmd != PROTO_CMD_HELLO ||
                     proto_inst.status != PROTO_STS_OK) {
-            err("Get strange answer from server. 'HELLO' expected!");
+            log_fatal("Get strange answer from server. 'HELLO' expected!");
             goto err;
         }
     }
@@ -180,11 +222,11 @@ int main(int argc, char **argv)
         // Analyze answer from server:
         if( proto_inst.cmd != PROTO_CMD_GET_PARAM ||
             proto_inst.status != PROTO_STS_OK) {
-            err("Get strange answer from server. 'GET_PARAM' expected!");
+            log_fatal("Get strange answer from server. 'GET_PARAM' expected!");
             goto err;
         }
         if( proto_inst.msg_len == 0 ) {
-            err("'GET_PARAM' answer has to have current Webcam settings");
+            log_fatal("'GET_PARAM' answer has to have current Webcam settings");
             goto err;
         }
     }
@@ -194,6 +236,7 @@ int main(int argc, char **argv)
         MEMZERO(proto_inst);
         proto_inst.cmd = PROTO_CMD_SET_PARAM;
 
+        serialize_args(&args_inst);
         proto_inst.msg_len = args_inst.binstr_len;
         memcpy(proto_inst.msg, args_inst.binstr, proto_inst.msg_len);
 
@@ -209,7 +252,7 @@ int main(int argc, char **argv)
         // Analyze answer from server:
         if( proto_inst.cmd != PROTO_CMD_SET_PARAM ||
             proto_inst.status != PROTO_STS_OK) {
-            err("Get strange answer from server. 'SET_PARAM' expected!");
+            log_fatal("Get strange answer from server. 'SET_PARAM' expected!");
             goto err;
         }
     }
@@ -232,13 +275,13 @@ int main(int argc, char **argv)
         // Analyze answer from server:
         if( proto_inst.cmd != PROTO_CMD_START ||
             proto_inst.status != PROTO_STS_OK) {
-            err("Get strange answer from server. 'SET_PARAM' expected!");
+            log_fatal("Get strange answer from server. 'SET_PARAM' expected!");
             goto err;
         }
     }
 
 
-    info("......Get DATA loop here.....");
+    log_info("......Get DATA loop here.....");
 
     pfds.fd = clnt_inst.peer_fd;
     pfds.events = POLLIN;
@@ -246,11 +289,11 @@ int main(int argc, char **argv)
     while (1) {
         ret = poll(&pfds, 1, 1000 * TIMEOUT_SEC);
         if (ret == -1) {
-            err("poll: [%m]");
+            log_fatal("poll: [%m]");
             return -1;
 
         } else if (ret == 0) {
-            err("poll: Time out");
+            log_fatal("poll: Time out");
             return -1;
         }
 
@@ -264,16 +307,16 @@ int main(int argc, char **argv)
 
             // Analyze answer from server:
             if (proto_inst.cmd == PROTO_CMD_DATA) {
-                //print_peer_msg("Srv --->", &proto_inst);
+                print_peer_msg("Srv --->", &proto_inst);
                 write(STDOUT_FILENO, proto_inst.data, proto_inst.data_len);
 
             } else {
-                err("Get strange answer from server. 'DATA' expected!");
+                log_warn("Get strange answer from server. 'DATA' expected!");
                 goto err;
             }
 
         } else {  // POLLERR | POLLHUP
-            info("peer closed connection");
+            log_info("peer closed connection");
             return -1;
         }
     }

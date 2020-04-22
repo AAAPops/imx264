@@ -4,9 +4,10 @@
 #include <netinet/in.h>
 
 #include "common.h"
+#include "log.h"
 #include "args.h"
 
-const char short_options[] = "d:?iP:F:w:h:f:c:";
+const char short_options[] = "d:?iP:F:w:h:f:c:D:b";
 
 const struct option
         long_options[] = {
@@ -19,6 +20,8 @@ const struct option
         { "height", required_argument, NULL, 'h' },
         { "frate",  required_argument, NULL, 'f' },
         { "count",  required_argument, NULL, 'c' },
+        { "debug",  required_argument, NULL, 'D' },
+        { "background",  required_argument, NULL, 'b' },
         { 0, 0, 0, 0 }
 };
 
@@ -33,6 +36,7 @@ static void set_defaults(struct Webcam_inst *wcam_i,
 
     strcpy(srv_i->string, "loopback");
     srv_i->port = 5100;
+    srv_i->run_mode = FOREGROUND;
 
     strcpy(coda_i->coda_name, "/dev/video0");
     coda_i->bitrate = 0;
@@ -43,7 +47,7 @@ static void set_defaults(struct Webcam_inst *wcam_i,
 void usage(char **argv,
            struct Webcam_inst* wcam_i, struct Srv_inst* srv_i) {
     fprintf(stderr, "Version %s \n", VERSION);
-    fprintf(stderr, "Usage: %s -d %s  -w %d -h %d -f %d -c %d -P %s:%d [-F] \n\n",
+    fprintf(stderr, "Usage: %s -d %s  -w %d -h %d -f %d -c %d -P %s:%d [-D] \n\n",
             argv[0],
             wcam_i->wcam_name, wcam_i->width, wcam_i->height,
             wcam_i->frame_rate, wcam_i->frame_count,
@@ -59,11 +63,16 @@ void usage(char **argv,
     fprintf(stderr, "\t-h | --height        Frame height resolution [240..1080]\n");
     fprintf(stderr, "\t-f | --frate         Framerate [5..30] \n");
     fprintf(stderr, "\t-c | --count         Number of frames to grab [0 - run forever] \n");
+    fprintf(stderr, "\t-b | --background    Run in background mode \n");
+    fprintf(stderr, "\t-D | --debug         Debug level [0..6] \n");
 }
 
 
 int pars_args(int argc, char **argv, struct Webcam_inst* wcam_i,
-        struct Srv_inst* srv_i, struct Coda_inst* coda_i) {
+        struct Srv_inst* srv_i, struct Coda_inst* coda_i)
+{
+    int loglevel = 0;
+    log_set_level(LOG_INFO);
 
     set_defaults(wcam_i, srv_i, coda_i);
 
@@ -112,7 +121,7 @@ int pars_args(int argc, char **argv, struct Webcam_inst* wcam_i,
                 }
 
                 if( srv_i->port < 1024 || srv_i->port > 65535 ) {
-                    err("A problem with parameter '--port'");
+                    log_fatal("A problem with parameter '--port'");
                     return -1;
                 }
 
@@ -122,7 +131,7 @@ int pars_args(int argc, char **argv, struct Webcam_inst* wcam_i,
             case 'w':
                 wcam_i->width = strtol(optarg, NULL, 10);
                 if( wcam_i->width < 320 || wcam_i->width > 1920 ) {
-                    err("A problem with parameter '--width'");
+                    log_fatal("A problem with parameter '--width'");
                     return -1;
                 }
                 break;
@@ -130,20 +139,20 @@ int pars_args(int argc, char **argv, struct Webcam_inst* wcam_i,
             case 'h':
                 wcam_i->height = strtol(optarg, NULL, 10);
               if( wcam_i->height < 240 || wcam_i->height > 1080 ) {
-                  err("A problem with parameter '--height'");
+                  log_fatal("A problem with parameter '--height'");
                   return -1;
               }
               break;
 
             case 'F':
-                err("'--file' option is not implemented yet");
+                log_fatal("'--file' option is not implemented yet");
                 return -1;
                 break;
 
             case 'f':
                 wcam_i->frame_rate = strtol(optarg, NULL, 10);
                 if( wcam_i->frame_rate < 5 || wcam_i->frame_rate > 30 ) {
-                    err("A problem with parameter '--frate'");
+                    log_fatal("A problem with parameter '--frate'");
                     return -1;
                 }
                 break;
@@ -151,9 +160,23 @@ int pars_args(int argc, char **argv, struct Webcam_inst* wcam_i,
             case 'c':
                 wcam_i->frame_count = strtol(optarg, NULL, 10);
                 if( wcam_i->frame_count < 0 || wcam_i->frame_count > 100000 ) {
-                    err("A problem with parameter '--count'");
+                    log_fatal("A problem with parameter '--count'");
                     return -1;
                 }
+                break;
+
+            case 'D':
+                loglevel = strtol(optarg, NULL, 10);
+                if( loglevel < LOG_TRACE || loglevel > LOG_FATAL ) {
+                    log_fatal("A problem with parameter '-D'");
+                    return -1;
+                }
+                log_set_level(loglevel);
+                break;
+
+            case 'b':
+                srv_i->run_mode = BACKGROUND;
+                log_set_quiet(BACKGROUND);
                 break;
 
             default:
@@ -162,11 +185,11 @@ int pars_args(int argc, char **argv, struct Webcam_inst* wcam_i,
         }
     }
 
-    dbg("Will use: %s -d %s  -w %d -h %d -f %d -c %d -P %s:%d \n",
+    log_info("Will use: %s -d %s  -w %d -h %d -f %d -c %d -P %s:%d -D%d \n",
             argv[0],
             wcam_i->wcam_name, wcam_i->width, wcam_i->height,
             wcam_i->frame_rate, wcam_i->frame_count,
-            srv_i->string, srv_i->port);
+            srv_i->string, srv_i->port, loglevel);
 
     return  0;
 }

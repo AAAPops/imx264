@@ -3,10 +3,11 @@ project(webcam_264)
 
 set(CMAKE_C_STANDARD 99)
 
-set(SOURCE          main.c args.c webcam.c server.c coda960.c proto.c)
-set(HEADER common.h        args.h webcam.h server.h coda960.h proto.h)
+set(SOURCE          main.c args.c webcam.c server.c coda960.c proto.c log.c)
+set(HEADER common.h        args.h webcam.h server.h coda960.h proto.h log.h)
 
 set(CMAKE_C_FLAGS "-mtune=cortex-a9 -mfpu=neon")
+add_definitions(-DLOG_USE_COLOR)
 
 #set(THREADS_PREFER_PTHREAD_FLAG ON)
 #find_package(Threads REQUIRED)
