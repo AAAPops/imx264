@@ -176,7 +176,7 @@ int pars_args(int argc, char **argv, struct Webcam_inst* wcam_i,
 
             case 'b':
                 srv_i->run_mode = BACKGROUND;
-                log_set_quiet(BACKGROUND);
+                //log_set_quiet(BACKGROUND);
                 break;
 
             default:

@@ -3,6 +3,9 @@
 #include <errno.h>
 #include <linux/videodev2.h>
 #include <sys/select.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <sys/stat.h>
 
 #include "common.h"
 #include "log.h"
@@ -37,6 +40,60 @@ double stopwatch(char* label, double timebegin) {
 
         return 0;
     }
+}
+
+
+int run_as_daemon(void) {
+    /* Our process ID and Session ID */
+    pid_t pid, sid;
+
+    /* Fork off the parent process */
+    pid = fork();
+    if( pid < 0 ) {
+        log_fatal("fork() [%m]");
+        exit(EXIT_FAILURE);;
+    }
+    /* If we got a good PID, then we can exit the parent process. */
+    if (pid > 0) { // Parent process has finished executing
+        log_debug("Parent process has finished executing");
+        exit(0);
+    }
+
+    /* Change the file mode mask */
+    umask(0);
+
+    /* Open any logs here */
+    log_fp = fopen(LOG_FILE_NAME, "w");
+    if (log_fp) {
+        log_set_fp(log_fp);
+    } else {
+        log_warn("fopen() [%m]");
+        log_warn("Continue without logging into file '%s'", LOG_FILE_NAME);
+    }
+
+
+    /* Create a new SID for the child process */
+    sid = setsid();
+    if (sid < 0) {
+        log_fatal("setsid() [%m]");
+        exit(EXIT_FAILURE);
+    }
+
+    /* Change the current working directory */
+    if( chdir("/") < 0 ) {
+        log_fatal("chdir() [%m]");
+        exit(EXIT_FAILURE);
+    }
+
+    /* Close out the standard file descriptors */
+    close(STDIN_FILENO);
+    close(STDOUT_FILENO);
+    close(STDERR_FILENO);
+
+    /* Daemon-specific initialization goes here */
+    log_set_quiet(BACKGROUND);
+
+    return 0;
 }
 
 
@@ -190,6 +247,12 @@ int main(int argc, char **argv) {
     ret = pars_args(argc, argv, &wcam_inst, &srv_inst, &coda_inst);
     if( ret != 0 )
         goto err_1;
+
+    if( srv_inst.run_mode == BACKGROUND) {
+        ret = run_as_daemon();
+        if (ret != 0)
+            goto err_1;
+    }
 
     ret = srv_srv_start(&srv_inst);
     if( ret != 0 )
