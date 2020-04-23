@@ -16,6 +16,6 @@ add_executable(webcam_x264 ${SOURCE})
 #target_link_libraries(webcam_x264  Threads::Threads)
 
 
-add_subdirectory(proto)
+add_subdirectory(proxy-client)
 
 

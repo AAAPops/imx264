@@ -3,3 +3,4 @@ converter/stream*
 
 cmake-build-debug*
 a-build/
+x86-build/
