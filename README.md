@@ -1,9 +1,25 @@
-Webcam
-======
+###webcam_x264
 
-A simple interface to grab frames from a capturing device using V4L2
 
-To compile:
+Проект, позволяющий взять "сырой" поток с бытовой Web-камеры, перекодировать его в h264 поток и выдать в сеть.
+В качестве платформы для кодирования необходимо использовать процессор **i.mx6**
+
+Чтобы собрать и запустить сервер на ТС-50:
 ```bash
-$ gcc -DWEBCAM_TEST -o test webcam.c -lpthread
+$ mkdir arm-build && cd arm-build
+$ cmake ../
+$ make
+
+$ ./webcam_x264 -d /dev/video2 -P 5100 -c 0 -D 2
 ```
+
+Чтобы собрать и запустить прокси-клиента на x86:
+```bash
+$ mkdir x86-build && cd x86-build
+$ cmake ../proxy-client/
+$ make
+
+$ ./v-client -w 640 -h 480 -f 25 -D2 -S 10.1.91.123:5100 |  gst-launch-1.0 -v fdsrc fd=0 ! h264parse ! avdec_h264 ! videoconvert ! autovideosink
+```
+
+***Значение всех опций есть в описании к каждой утилите, достаточно запустить оную без параметров***
