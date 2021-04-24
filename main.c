@@ -63,6 +63,7 @@ int run_as_daemon(void) {
     umask(0);
 
     /* Open any logs here */
+    FILE *log_fp;
     log_fp = fopen(LOG_FILE_NAME, "w");
     if (log_fp) {
         log_set_fp(log_fp);
