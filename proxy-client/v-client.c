@@ -22,6 +22,10 @@
 #define SV_SOCK_PATH    "/tmp/gst-sock"
 #define BACKLOG    5
 
+#define FRAME_BUFFER_SZ 5000000 // 5MB
+#define QUEUE_MINIMAL_THRESHHOLD 1
+#define QUEUE_MAX_ELEMENTS 100
+
 #define H264_BUFF_SZ 1000000 // 1MB
 
 struct Args_inst {
@@ -31,6 +35,15 @@ struct Args_inst {
 
     char    binstr[1024];
     int     binstr_len;
+};
+
+struct H264_Buffer {
+    uint8_t  buff[FRAME_BUFFER_SZ];       // Указатель на начало h264 буфера
+    uint32_t buff_total_sz;               //
+    uint32_t buff_curr_sz;                // Текущий размер буфера в байтах
+    uint32_t h264_idx;                    // Текущее число h264 кадров в буфере
+    uint32_t h264_frame_sz[QUEUE_MAX_ELEMENTS]; // Массив, содержащий размер каждого h264 кадра
+    uint32_t min_treshhold;               // Минимальная длина буфера в начале работы
 };
 
 
@@ -180,11 +193,63 @@ int serialize_args(struct Args_inst *ai) {
     return 0;
 }
 
+int h264_buff_init(struct H264_Buffer *fb0) {
+    int ret = 0;
+
+    MEMZERO(fb0->buff);
+    fb0->buff_total_sz = sizeof(fb0->buff);
+    fb0->buff_curr_sz = 0;
+    fb0->h264_idx = 0;
+    MEMZERO(fb0->h264_frame_sz);
+    fb0->min_treshhold = 0;
+
+    return ret;
+}
+
+int h264_buff_add_new_frame(struct H264_Buffer *fb0,
+                            void *raw_frame, uint32_t raw_frame_sz) {
+    int ret = 0;
+
+    // Тонна проверок на корректность добавления еще одного h264 кадра
+
+    fb0->h264_idx++;
+    fb0->h264_frame_sz[fb0->h264_idx] = raw_frame_sz;
+
+    memcpy(fb0->buff + fb0->buff_curr_sz, raw_frame, raw_frame_sz);
+
+    fb0->buff_curr_sz += raw_frame_sz;
+
+
+    log_debug("Frames in queue (add): %d, Memory in use: %d", fb0->h264_idx, fb0->buff_curr_sz);
+
+    return ret;
+}
+
+
+int h264_buff_del_first_frame(struct H264_Buffer *fb0) {
+    int ret = 0;
+
+    uint32_t first_frame_sz = fb0->h264_frame_sz[1];
+    fb0->buff_curr_sz -= first_frame_sz;
+
+    memcpy(fb0->buff, fb0->buff + first_frame_sz, fb0->buff_curr_sz);
+
+    int i;
+    for(i = 1; i < fb0->h264_idx; i++ )
+        fb0->h264_frame_sz[i] = fb0->h264_frame_sz[i+1];
+
+    fb0->h264_idx--;
+
+    //log_debug("Frames in queue (del): %d, Memory in use: %d", fb0->h264_idx, fb0->buff_curr_sz);
+
+    return ret;
+}
+
 
 int main(int argc, char **argv)
 {
-    struct Webcam_inst wcam_inst;
-    MEMZERO(wcam_inst);
+    //struct Webcam_inst wcam_inst;
+    //MEMZERO(wcam_inst);
     struct Srv_inst clnt_inst;
     MEMZERO(clnt_inst);
     struct Proto_inst proto_inst;
@@ -196,6 +261,13 @@ int main(int argc, char **argv)
     int ret;
 
     char h264_buf[H264_BUFF_SZ];
+
+
+    struct H264_Buffer fb;
+    ret = h264_buff_init(&fb);
+    if (ret)
+      goto err;
+
 
     ret = pars_args(argc, argv, &args_inst, &clnt_inst);
     if (ret)
@@ -331,8 +403,18 @@ int main(int argc, char **argv)
             // Analyze answer from server:
             if (proto_inst.cmd == PROTO_CMD_DATA) {
                 print_peer_msg("Srv --->", &proto_inst);
-                write(STDOUT_FILENO, proto_inst.data, proto_inst.data_len);
 
+                h264_buff_add_new_frame(&fb, proto_inst.data, proto_inst.data_len);
+                fb.min_treshhold++;
+
+                if (fb.min_treshhold >= QUEUE_MINIMAL_THRESHHOLD ) {
+                    fb.min_treshhold = QUEUE_MINIMAL_THRESHHOLD;
+
+                    write(STDOUT_FILENO, fb.buff, fb.h264_frame_sz[1]);
+                    log_debug("Write to stdout: %d", fb.h264_frame_sz[1]);
+
+                    h264_buff_del_first_frame(&fb);
+                }
             } else {
                 log_warn("Get strange answer from server. 'DATA' expected!");
                 goto err;
