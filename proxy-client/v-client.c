@@ -4,6 +4,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <poll.h>
+#include <sys/wait.h>
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -23,8 +24,12 @@
 #define BACKLOG    5
 
 #define FRAME_BUFFER_SZ 5000000 // 5MB
-#define QUEUE_MINIMAL_THRESHHOLD 1
+#define QUEUE_MIN_LEN   3
+#define QUEUE_MAX_LEN   7
 #define QUEUE_MAX_ELEMENTS 100
+
+#define PipeReadFd  0
+#define PipeWriteFd 1
 
 #define H264_BUFF_SZ 1000000 // 1MB
 
@@ -43,7 +48,8 @@ struct H264_Buffer {
     uint32_t buff_curr_sz;                // Текущий размер буфера в байтах
     uint32_t h264_idx;                    // Текущее число h264 кадров в буфере
     uint32_t h264_frame_sz[QUEUE_MAX_ELEMENTS]; // Массив, содержащий размер каждого h264 кадра
-    uint32_t min_treshhold;               // Минимальная длина буфера в начале работы
+    int32_t  min_qlen;                    // Минимальное количество фреймов в буфере для начала работы
+    int32_t  max_qlen;                    // Максимальное количество фреймов в буфере до начала их отбрасывания
 };
 
 
@@ -201,7 +207,8 @@ int h264_buff_init(struct H264_Buffer *fb0) {
     fb0->buff_curr_sz = 0;
     fb0->h264_idx = 0;
     MEMZERO(fb0->h264_frame_sz);
-    fb0->min_treshhold = 0;
+    fb0->min_qlen = QUEUE_MIN_LEN;
+    fb0->max_qlen = QUEUE_MAX_LEN;
 
     return ret;
 }
@@ -248,8 +255,6 @@ int h264_buff_del_first_frame(struct H264_Buffer *fb0) {
 
 int main(int argc, char **argv)
 {
-    //struct Webcam_inst wcam_inst;
-    //MEMZERO(wcam_inst);
     struct Srv_inst clnt_inst;
     MEMZERO(clnt_inst);
     struct Proto_inst proto_inst;
@@ -257,10 +262,13 @@ int main(int argc, char **argv)
     struct Args_inst args_inst;
     MEMZERO(args_inst);
 
-    struct pollfd pfds;
+    struct pollfd pfds[2];
     int ret;
 
     char h264_buf[H264_BUFF_SZ];
+
+    int pipeFD[2];   /* two file descriptors */
+    char pipe_buf[500];   /* 1-byte buffer */
 
 
     struct H264_Buffer fb;
@@ -376,59 +384,126 @@ int main(int argc, char **argv)
     }
 
 
-    log_info("......Get DATA loop here.....");
+    log_info("......Get DATA loop here.....");    // 1sec = 1000000 usec
 
-    pfds.fd = clnt_inst.peer_fd;
-    pfds.events = POLLIN;
-
-    while (1) {
-        ret = poll(&pfds, 1, 1000 * TIMEOUT_SEC);
-        if (ret == -1) {
-            log_fatal("poll: [%m]");
-            return -1;
-
-        } else if (ret == 0) {
-            log_fatal("poll: Time out");
-            return -1;
-        }
-
-        if (pfds.revents & POLLIN) {
-            // Get DATA
-            MEMZERO(proto_inst);
-            proto_inst.data = h264_buf;
-            ret = get_peer_msg(&clnt_inst, &proto_inst);
-            if (ret)
-                goto err;
-
-            // Analyze answer from server:
-            if (proto_inst.cmd == PROTO_CMD_DATA) {
-                print_peer_msg("Srv --->", &proto_inst);
-
-                h264_buff_add_new_frame(&fb, proto_inst.data, proto_inst.data_len);
-                fb.min_treshhold++;
-
-                if (fb.min_treshhold >= QUEUE_MINIMAL_THRESHHOLD ) {
-                    fb.min_treshhold = QUEUE_MINIMAL_THRESHHOLD;
-
-                    write(STDOUT_FILENO, fb.buff, fb.h264_frame_sz[1]);
-                    log_debug("Write to stdout: %d", fb.h264_frame_sz[1]);
-
-                    h264_buff_del_first_frame(&fb);
-                }
-            } else {
-                log_warn("Get strange answer from server. 'DATA' expected!");
-                goto err;
-            }
-
-        } else {  // POLLERR | POLLHUP
-            log_info("peer closed connection");
-            return -1;
-        }
+    if (pipe(pipeFD) < 0) {
+        log_error("Pipe create");
+        goto err;
     }
 
+    pid_t child_pid = fork();
 
-err:
-    close(clnt_inst.peer_fd);
+    switch (child_pid)
+    {
+        case -1: /* An error has occurred */
+            log_error("Fork Error");
+            goto err;
+            break;
+
+        case 0: // Child process <---------------------------------------------------------->
+            log_info("Child: job start");
+            close(pipeFD[PipeReadFd]);      /* close the ReadEnd: all done */
+
+            const char *msg = "knock-knock\n";
+            while (1) {
+                write(pipeFD[PipeWriteFd], msg, strlen(msg));
+                usleep(1000000 / 24);
+            }
+
+            log_debug("Child: job finish");
+            close(pipeFD[PipeWriteFd]);     /* close the ReadEnd: all done */
+            exit(0);
+            break;
+
+        default: // Parent process <---------------------------------------------------------->
+        {
+            log_info("Parent process: get data from server");
+            close(pipeFD[PipeWriteFd]);
+
+            pfds[0].fd = clnt_inst.peer_fd;
+            pfds[0].events = POLLIN;
+            pfds[0].revents = 0;
+
+            pfds[1].fd = pipeFD[PipeReadFd];
+            pfds[1].events = POLLIN;
+            pfds[1].revents = 0;
+
+            while (1) {
+                ret = poll(pfds, 2, 1000 * TIMEOUT_SEC);
+                if (ret == -1) {
+                    log_fatal("poll: [%m]");
+                    return -1;
+
+                } else if (ret == 0) {
+                    log_fatal("poll: Time out");
+                    return -1;
+                }
+
+                if (pfds[0].revents & POLLIN) {
+                    // Get DATA from Server ----------------
+                    MEMZERO(proto_inst);
+                    proto_inst.data = h264_buf;
+                    ret = get_peer_msg(&clnt_inst, &proto_inst);
+                    if (ret)
+                        goto err;
+
+                    // Analyze answer from server:
+                    if (proto_inst.cmd == PROTO_CMD_DATA) {
+                        print_peer_msg("Srv --->", &proto_inst);
+                        h264_buff_add_new_frame(&fb, proto_inst.data, proto_inst.data_len);
+
+                    } else {
+                        log_warn("Get strange answer from server. 'DATA' expected!");
+                        goto err;
+                    }
+                } /*else { // POLLERR | POLLHUP
+                    fprintf(stderr, "  fd=%d; events: %s%s%s\n", pfds[0].fd,
+                           (pfds[0].revents & POLLIN)  ? "POLLIN "  : "?",
+                           (pfds[0].revents & POLLHUP) ? "POLLHUP " : "?",
+                           (pfds[0].revents & POLLERR) ? "POLLERR " : "?");
+                    log_info("Server closed connection");
+                    goto err;
+                }*/
+
+                // Check Pipe --------------------------------------
+                if (pfds[1].revents & POLLIN) {
+                    read(pipeFD[PipeReadFd], &pipe_buf, sizeof(pipe_buf));
+
+                    if (fb.h264_idx >= QUEUE_MIN_LEN ) {
+                        log_debug("Knock-knock from child: Time to write out first h264 frame from buffer");
+
+                        write(STDOUT_FILENO, fb.buff, fb.h264_frame_sz[1]);
+                        log_debug("Write to stdout: %d", fb.h264_frame_sz[1]);
+                        h264_buff_del_first_frame(&fb);
+                    } else {
+                        log_debug("Knock-knock from child: Too little of h264 frames in buffer");
+
+                    }
+
+                    if (fb.h264_idx > QUEUE_MAX_LEN ) {
+                        int i;
+                        for (i = 0; i = fb.h264_idx - QUEUE_MAX_LEN; i++) {
+                            log_debug("Knock-knock from child: Too many of h264 frames in buffer");
+
+                            write(STDOUT_FILENO, fb.buff, fb.h264_frame_sz[1]);
+                            log_debug("Write to stdout: %d", fb.h264_frame_sz[1]);
+                            h264_buff_del_first_frame(&fb);
+                        }
+                    }
+
+                } /*else { // POLLERR | POLLHUP
+                    log_info("PipeReadEnd closed connection");
+                    goto err;
+                }*/
+            }
+        }
+
+        err:
+        close(pipeFD[PipeReadFd]);
+        close(pipeFD[PipeWriteFd]);
+        close(clnt_inst.peer_fd);
+        wait(NULL);            /* wait for child to exit */
+    }
 }
 
 
