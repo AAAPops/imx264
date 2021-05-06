@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <poll.h>
 #include <sys/wait.h>
+#include <sys/time.h>
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -52,7 +53,31 @@ struct H264_Buffer {
     int32_t  max_qlen;                    // Максимальное количество фреймов в буфере до начала их отбрасывания
 };
 
+double stopwatch(char* label, double timebegin) {
+    struct timeval tv;
 
+    if( timebegin == 0 ) {
+        if (label)
+            fprintf(stderr, "%s: Start stopwatch... \n", label);
+        else
+            fprintf(stderr, "Start stopwatch... \n");
+
+
+        gettimeofday(&tv, NULL);
+        double time_begin = ((double) tv.tv_sec) * 1000 +
+                            ((double) tv.tv_usec) / 1000;
+        return time_begin;
+    } else {
+        gettimeofday(&tv, NULL);
+        double time_end = ((double)tv.tv_sec) * 1000 +
+                          ((double)tv.tv_usec) / 1000 ;
+
+        fprintf(stderr, "%s: Execute time = %f(ms) \n",
+                label, time_end - timebegin);
+
+        return 0;
+    }
+}
 
 int make_srv_connect(struct Srv_inst* si) {
     struct sockaddr_in servaddr;
@@ -429,6 +454,7 @@ int main(int argc, char **argv)
             pfds[1].revents = 0;
 
             while (1) {
+                //double sw_time = stopwatch(NULL, 0);
                 ret = poll(pfds, 2, 1000 * TIMEOUT_SEC);
                 if (ret == -1) {
                     log_fatal("poll: [%m]");
@@ -456,6 +482,7 @@ int main(int argc, char **argv)
                         log_warn("Get strange answer from server. 'DATA' expected!");
                         goto err;
                     }
+                    //stopwatch("Get DATA from Server", sw_time);
                 } /*else { // POLLERR | POLLHUP
                     fprintf(stderr, "  fd=%d; events: %s%s%s\n", pfds[0].fd,
                            (pfds[0].revents & POLLIN)  ? "POLLIN "  : "?",
@@ -482,7 +509,7 @@ int main(int argc, char **argv)
 
                     if (fb.h264_idx > QUEUE_MAX_LEN ) {
                         int i;
-                        for (i = 0; i = fb.h264_idx - QUEUE_MAX_LEN; i++) {
+                        for (i = 0; i = fb.h264_idx - QUEUE_MIN_LEN; i++) {
                             log_debug("Knock-knock from child: Too many of h264 frames in buffer");
 
                             write(STDOUT_FILENO, fb.buff, fb.h264_frame_sz[1]);
@@ -490,11 +517,13 @@ int main(int argc, char **argv)
                             h264_buff_del_first_frame(&fb);
                         }
                     }
+                    //stopwatch("Output Data to stdout", sw_time);
 
                 } /*else { // POLLERR | POLLHUP
                     log_info("PipeReadEnd closed connection");
                     goto err;
                 }*/
+                //stopwatch("Loop finish here", sw_time);
             }
         }
 
