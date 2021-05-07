@@ -11,6 +11,8 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
+#include <sys/mman.h>
+
 //#include "../common.h"
 #include "../webcam.h"
 #include "../server.h"
@@ -26,11 +28,12 @@
 
 #define FRAME_BUFFER_SZ 5000000 // 5MB
 #define QUEUE_MIN_LEN   3
-#define QUEUE_MAX_LEN   7
+#define QUEUE_MAX_LEN   5
 #define QUEUE_MAX_ELEMENTS 100
 
-#define PipeReadFd  0
-#define PipeWriteFd 1
+
+#define SHM_WRITE_ON   1
+#define SHM_WRITE_OFF  0
 
 #define H264_BUFF_SZ 1000000 // 1MB
 
@@ -44,13 +47,12 @@ struct Args_inst {
 };
 
 struct H264_Buffer {
-    uint8_t  buff[FRAME_BUFFER_SZ];       // Указатель на начало h264 буфера
     uint32_t buff_total_sz;               //
     uint32_t buff_curr_sz;                // Текущий размер буфера в байтах
     uint32_t h264_idx;                    // Текущее число h264 кадров в буфере
     uint32_t h264_frame_sz[QUEUE_MAX_ELEMENTS]; // Массив, содержащий размер каждого h264 кадра
-    int32_t  min_qlen;                    // Минимальное количество фреймов в буфере для начала работы
-    int32_t  max_qlen;                    // Максимальное количество фреймов в буфере до начала их отбрасывания
+    uint8_t  write_lock;
+    uint8_t  buff[FRAME_BUFFER_SZ];       // Указатель на начало h264 буфера
 };
 
 double stopwatch(char* label, double timebegin) {
@@ -232,8 +234,7 @@ int h264_buff_init(struct H264_Buffer *fb0) {
     fb0->buff_curr_sz = 0;
     fb0->h264_idx = 0;
     MEMZERO(fb0->h264_frame_sz);
-    fb0->min_qlen = QUEUE_MIN_LEN;
-    fb0->max_qlen = QUEUE_MAX_LEN;
+    fb0->write_lock = SHM_WRITE_ON;
 
     return ret;
 }
@@ -241,6 +242,16 @@ int h264_buff_init(struct H264_Buffer *fb0) {
 int h264_buff_add_new_frame(struct H264_Buffer *fb0,
                             void *raw_frame, uint32_t raw_frame_sz) {
     int ret = 0;
+    int counter = 0;
+
+    while ( fb0->write_lock != SHM_WRITE_ON ) {
+        usleep(1000);
+        if (counter++ == 100) {
+            log_warn("Shared memory: WRITE_OFF");
+            return -1;
+        }
+    }
+    fb0->write_lock = SHM_WRITE_OFF;
 
     // Тонна проверок на корректность добавления еще одного h264 кадра
 
@@ -254,12 +265,23 @@ int h264_buff_add_new_frame(struct H264_Buffer *fb0,
 
     log_debug("Frames in queue (add): %d, Memory in use: %d", fb0->h264_idx, fb0->buff_curr_sz);
 
+    fb0->write_lock = SHM_WRITE_ON;
     return ret;
 }
 
 
 int h264_buff_del_first_frame(struct H264_Buffer *fb0) {
     int ret = 0;
+    int counter = 0;
+
+    while ( fb0->write_lock != SHM_WRITE_ON ) {
+        usleep(1000);
+        if (counter++ == 100) {
+            log_warn("Shared memory: WRITE_OFF");
+            return -1;
+        }
+    }
+    fb0->write_lock = SHM_WRITE_OFF;
 
     uint32_t first_frame_sz = fb0->h264_frame_sz[1];
     fb0->buff_curr_sz -= first_frame_sz;
@@ -274,9 +296,24 @@ int h264_buff_del_first_frame(struct H264_Buffer *fb0) {
 
     //log_debug("Frames in queue (del): %d, Memory in use: %d", fb0->h264_idx, fb0->buff_curr_sz);
 
+    fb0->write_lock = SHM_WRITE_ON;
     return ret;
 }
 
+
+void* create_shared_memory(size_t size) {
+    // Our memory buffer will be readable and writable:
+    int protection = PROT_READ | PROT_WRITE;
+
+    // The buffer will be shared (meaning other processes can access it), but
+    // anonymous (meaning third-party processes cannot obtain an address for it),
+    // so only this process and its children will be able to use it:
+    int visibility = MAP_SHARED | MAP_ANONYMOUS;
+
+    // The remaining parameters to `mmap()` are not important for this use case,
+    // but the manpage for `mmap` explains their purpose.
+    return mmap(NULL, size, protection, visibility, -1, 0);
+}
 
 int main(int argc, char **argv)
 {
@@ -287,29 +324,27 @@ int main(int argc, char **argv)
     struct Args_inst args_inst;
     MEMZERO(args_inst);
 
-    struct pollfd pfds[2];
     int ret;
-
+    struct pollfd pfds[2];
     char h264_buf[H264_BUFF_SZ];
 
-    int pipeFD[2];   /* two file descriptors */
-    char pipe_buf[500];   /* 1-byte buffer */
+    void* shmem = create_shared_memory(sizeof(struct H264_Buffer));
+    //memcpy(shmem, parent_message, sizeof(parent_message));
+    struct H264_Buffer *fbp = (struct H264_Buffer*)shmem;
 
-
-    struct H264_Buffer fb;
-    ret = h264_buff_init(&fb);
+    ret = h264_buff_init(fbp);
     if (ret)
-      goto err;
+      goto err_main;
 
 
     ret = pars_args(argc, argv, &args_inst, &clnt_inst);
     if (ret)
-        goto err;
+        goto err_main;
 
 
     ret = make_srv_connect(&clnt_inst);
     if (ret)
-        goto err;
+        goto err_main;
 
     //Send HELLO and greating message
     {
@@ -320,17 +355,17 @@ int main(int argc, char **argv)
         print_peer_msg("Srv <---", &proto_inst);
         ret = send_peer_msg(&clnt_inst, &proto_inst);
         if (ret)
-            goto err;
+            goto err_main;
 
         ret = get_peer_msg(&clnt_inst, &proto_inst);
         if (ret)
-            goto err;
+            goto err_main;
         print_peer_msg("    --->", &proto_inst);
         // Analyze answer from server:
         if( proto_inst.cmd != PROTO_CMD_HELLO ||
                     proto_inst.status != PROTO_STS_OK) {
             log_fatal("Get strange answer from server. 'HELLO' expected!");
-            goto err;
+            goto err_main;
         }
     }
 
@@ -341,21 +376,21 @@ int main(int argc, char **argv)
         print_peer_msg("Srv <---", &proto_inst);
         ret = send_peer_msg(&clnt_inst, &proto_inst);
         if (ret)
-            goto err;
+            goto err_main;
 
         ret = get_peer_msg(&clnt_inst, &proto_inst);
         if (ret)
-            goto err;
+            goto err_main;
         print_peer_msg("    --->", &proto_inst);
         // Analyze answer from server:
         if( proto_inst.cmd != PROTO_CMD_GET_PARAM ||
             proto_inst.status != PROTO_STS_OK) {
             log_fatal("Get strange answer from server. 'GET_PARAM' expected!");
-            goto err;
+            goto err_main;
         }
         if( proto_inst.msg_len == 0 ) {
             log_fatal("'GET_PARAM' answer has to have current Webcam settings");
-            goto err;
+            goto err_main;
         }
     }
 
@@ -371,22 +406,22 @@ int main(int argc, char **argv)
         print_peer_msg("Srv <---", &proto_inst);
         ret = send_peer_msg(&clnt_inst, &proto_inst);
         if (ret)
-            goto err;
+            goto err_main;
 
         ret = get_peer_msg(&clnt_inst, &proto_inst);
         if (ret)
-            goto err;
+            goto err_main;
         print_peer_msg("    --->", &proto_inst);
         // Analyze answer from server:
         if( proto_inst.cmd != PROTO_CMD_SET_PARAM ||
             proto_inst.status != PROTO_STS_OK) {
             log_fatal("Get strange answer from server. 'SET_PARAM' expected!");
-            goto err;
+            goto err_main;
         }
     }
 
 
-    sleep(1);
+    //sleep(1);
     //Send START message
     {
         MEMZERO(proto_inst);
@@ -394,146 +429,132 @@ int main(int argc, char **argv)
         print_peer_msg("Srv <---", &proto_inst);
         ret = send_peer_msg(&clnt_inst, &proto_inst);
         if (ret)
-            goto err;
+            goto err_main;
 
         ret = get_peer_msg(&clnt_inst, &proto_inst);
         if (ret)
-            goto err;
+            goto err_main;
         print_peer_msg("    --->", &proto_inst);
         // Analyze answer from server:
         if( proto_inst.cmd != PROTO_CMD_START ||
             proto_inst.status != PROTO_STS_OK) {
             log_fatal("Get strange answer from server. 'SET_PARAM' expected!");
-            goto err;
+            goto err_main;
         }
     }
 
 
     log_info("......Get DATA loop here.....");    // 1sec = 1000000 usec
 
-    if (pipe(pipeFD) < 0) {
-        log_error("Pipe create");
-        goto err;
-    }
-
     pid_t child_pid = fork();
-
     switch (child_pid)
     {
         case -1: /* An error has occurred */
             log_error("Fork Error");
-            goto err;
+            goto err_main;
             break;
 
         case 0: // Child process <---------------------------------------------------------->
+        {
             log_info("Child: job start");
-            close(pipeFD[PipeReadFd]);      /* close the ReadEnd: all done */
 
-            const char *msg = "knock-knock\n";
-            while (1) {
-                write(pipeFD[PipeWriteFd], msg, strlen(msg));
-                usleep(1000000 / 24);
+            while (1)
+            {
+                //double check1 = stopwatch(NULL, 0);
+                usleep(1000000 / args_inst.framerate );
+
+                if (fbp->h264_idx >= QUEUE_MIN_LEN )
+                {
+                    log_debug("Child: Write to stdout: %d", fbp->h264_frame_sz[1]);
+
+                    write(STDOUT_FILENO, fbp->buff, fbp->h264_frame_sz[1]);
+                    ret = h264_buff_del_first_frame(fbp);
+                    if (ret)
+                        break;
+
+                } else {
+                    log_debug("Child: Too little of h264 frames in buffer");
+                }
+
+                if (fbp->h264_idx > QUEUE_MAX_LEN ) {
+                    log_debug("Child: Too many of h264 frames in buffer");
+                    int i;
+                    for (i = 0; i = fbp->h264_idx - QUEUE_MIN_LEN; i++) {
+                        log_debug("Write to stdout: %d", fbp->h264_frame_sz[1]);
+
+                        write(STDOUT_FILENO, fbp->buff, fbp->h264_frame_sz[1]);
+                        ret = h264_buff_del_first_frame(fbp);
+                        if (ret)
+                            break;
+                    }
+                }
+                //stopwatch("End of Loop", check1);
             }
 
             log_debug("Child: job finish");
-            close(pipeFD[PipeWriteFd]);     /* close the ReadEnd: all done */
             exit(0);
             break;
+        }
 
         default: // Parent process <---------------------------------------------------------->
         {
             log_info("Parent process: get data from server");
-            close(pipeFD[PipeWriteFd]);
 
             pfds[0].fd = clnt_inst.peer_fd;
             pfds[0].events = POLLIN;
             pfds[0].revents = 0;
 
-            pfds[1].fd = pipeFD[PipeReadFd];
-            pfds[1].events = POLLIN;
-            pfds[1].revents = 0;
-
             while (1) {
                 //double sw_time = stopwatch(NULL, 0);
-                ret = poll(pfds, 2, 1000 * TIMEOUT_SEC);
+                ret = poll(pfds, 1, 1000 * TIMEOUT_SEC);
                 if (ret == -1) {
                     log_fatal("poll: [%m]");
-                    return -1;
+                    goto err_parent;
 
                 } else if (ret == 0) {
                     log_fatal("poll: Time out");
-                    return -1;
+                    goto err_parent;
                 }
 
-                if (pfds[0].revents & POLLIN) {
-                    // Get DATA from Server ----------------
+                if (pfds[0].revents & POLLIN) { // Get DATA from Server ----------------
+
                     MEMZERO(proto_inst);
                     proto_inst.data = h264_buf;
                     ret = get_peer_msg(&clnt_inst, &proto_inst);
                     if (ret)
-                        goto err;
+                        goto err_parent;
 
                     // Analyze answer from server:
                     if (proto_inst.cmd == PROTO_CMD_DATA) {
                         print_peer_msg("Srv --->", &proto_inst);
-                        h264_buff_add_new_frame(&fb, proto_inst.data, proto_inst.data_len);
+
+                        ret = h264_buff_add_new_frame(fbp, proto_inst.data, proto_inst.data_len);
+                        if (ret)
+                            break;
 
                     } else {
                         log_warn("Get strange answer from server. 'DATA' expected!");
-                        goto err;
+                        goto err_parent;
                     }
                     //stopwatch("Get DATA from Server", sw_time);
-                } /*else { // POLLERR | POLLHUP
-                    fprintf(stderr, "  fd=%d; events: %s%s%s\n", pfds[0].fd,
-                           (pfds[0].revents & POLLIN)  ? "POLLIN "  : "?",
-                           (pfds[0].revents & POLLHUP) ? "POLLHUP " : "?",
-                           (pfds[0].revents & POLLERR) ? "POLLERR " : "?");
+                } else if (pfds[0].revents & POLLHUP) {
                     log_info("Server closed connection");
-                    goto err;
-                }*/
+                    goto err_parent;
+                }
 
-                // Check Pipe --------------------------------------
-                if (pfds[1].revents & POLLIN) {
-                    read(pipeFD[PipeReadFd], &pipe_buf, sizeof(pipe_buf));
+            } // Main loop in parent process
+        } // Parent process <---------------------------------------------------------->
+    } // Switch()
 
-                    if (fb.h264_idx >= QUEUE_MIN_LEN ) {
-                        log_debug("Knock-knock from child: Time to write out first h264 frame from buffer");
-
-                        write(STDOUT_FILENO, fb.buff, fb.h264_frame_sz[1]);
-                        log_debug("Write to stdout: %d", fb.h264_frame_sz[1]);
-                        h264_buff_del_first_frame(&fb);
-                    } else {
-                        log_debug("Knock-knock from child: Too little of h264 frames in buffer");
-
-                    }
-
-                    if (fb.h264_idx > QUEUE_MAX_LEN ) {
-                        int i;
-                        for (i = 0; i = fb.h264_idx - QUEUE_MIN_LEN; i++) {
-                            log_debug("Knock-knock from child: Too many of h264 frames in buffer");
-
-                            write(STDOUT_FILENO, fb.buff, fb.h264_frame_sz[1]);
-                            log_debug("Write to stdout: %d", fb.h264_frame_sz[1]);
-                            h264_buff_del_first_frame(&fb);
-                        }
-                    }
-                    //stopwatch("Output Data to stdout", sw_time);
-
-                } /*else { // POLLERR | POLLHUP
-                    log_info("PipeReadEnd closed connection");
-                    goto err;
-                }*/
-                //stopwatch("Loop finish here", sw_time);
-            }
-        }
-
-        err:
-        close(pipeFD[PipeReadFd]);
-        close(pipeFD[PipeWriteFd]);
-        close(clnt_inst.peer_fd);
-        wait(NULL);            /* wait for child to exit */
-    }
+    err_parent:
+    kill(child_pid, SIGKILL);
+    wait(NULL);            /* wait for child to exit */
+    log_info("Child process (#%d) finished", child_pid);
+    err_main:
+    close(clnt_inst.peer_fd);
+    munmap(shmem, sizeof(struct H264_Buffer));
 }
+
 
 
 /*
@@ -581,7 +602,7 @@ gst_connection(char *sock_path) {
     info("Accept incoming connection on '%s'", sock_path);
 
         // Transfer data from connected socket to stdout until EOF
-        //write(STDOUT_FILENO, buf, numRead) != numRead)
+        //write(STDOUT_FILENO, buf, numRead) != numRead)shmem = create_shared_memory(sizeof(struct H264_Buffer
         //fatal("partial/failed write");
     return cfd;
 }
